@@ -24,9 +24,9 @@ module soc (
 // ── CPU ───────────────────────────────────────────────────────────────────────
 wire [7:0]  imem_addr;
 wire [15:0] imem_data;
-wire [7:0]  DataMem_Addr;
-wire [15:0] DataMem_WriteData;
-wire        DataMem_WriteEnable;
+wire [7:0]  dmem_addr;
+wire [15:0] dmem_wdata;
+wire        dmem_we;
 wire [15:0] dmem_rdata;
 
 cpu u_cpu (
@@ -34,9 +34,9 @@ cpu u_cpu (
     .resetn     (resetn),
     .imem_addr  (imem_addr),
     .imem_data  (imem_data),
-    .DataMem_Addr  (DataMem_Addr),
-    .DataMem_WriteData (DataMem_WriteData),
-    .DataMem_WriteEnable    (DataMem_WriteEnable),
+    .dmem_addr  (dmem_addr),
+    .dmem_wdata (dmem_wdata),
+    .dmem_we    (dmem_we),
     .dmem_rdata (dmem_rdata),
     .halted     (halted)
 );
@@ -58,11 +58,11 @@ initial begin
         dmem[i] = 16'h0;
 end
 
-assign dmem_rdata = dmem[DataMem_Addr];                 // async read
+assign dmem_rdata = dmem[dmem_addr];                 // async read
 
 always @(posedge clk) begin
-    if (DataMem_WriteEnable)
-        dmem[DataMem_Addr] <= DataMem_WriteData;               // sync write (SW)
+    if (dmem_we)
+        dmem[dmem_addr] <= dmem_wdata;               // sync write (SW)
 end
 
 endmodule

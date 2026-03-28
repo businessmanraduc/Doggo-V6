@@ -35,9 +35,9 @@ module cpu (
   input  wire [15:0] imem_data,           // instruction word at that address
 
   // ── Data memory ──────────────────────────────────────────────────────────
-  output wire [7:0]  DataMem_Addr,        // word address (read or write)
-  output wire [15:0] DataMem_WriteData,   // write data (for SW)
-  output wire        DataMem_WriteEnable, // write enable
+  output wire [7:0]  dmem_addr,           // word address (read or write)
+  output wire [15:0] dmem_wdata,          // write data (for SW)
+  output wire        dmem_we,             // write enable
   input  wire [15:0] dmem_rdata,          // read data (for LW, combinational)
 
   output reg         halted               // goes high when HALT retires in WB
@@ -46,10 +46,32 @@ module cpu (
   // =============================================================================
   // PROGRAM COUNTER
   // =============================================================================
-  reg [7:0] programCounter;
+    reg [7:0] ProgramCounter;
 
-  // IF stage drives the instruction memory address combinationally
-  assign imem_addr = programCounter;
+    // ── Program Counter update ─────────────────────────────────────────────────
+    //   flush  → redirect to branch/jump target (computed in StageIII)
+    //   stall  → hold: PC keeps its current value (no assignment)
+    //   normal → advance by one word
+    always @(posedge clk) begin
+      if (!resetn) begin
+        ProgramCounter <= 8'h0;
+      end else if (halted) begin
+        // ── CPU halted: freeze PC ──────────────────────────────────────────────
+      end else begin
+        if (flush) begin
+          // ── Branch/Jump taken: redirect to computed target ────────────────────
+          ProgramCounter <= StageIII_branchTarget;
+        end else if (!stall) begin
+          // ── Normal advance: move to next word ─────────────────────────────────
+          ProgramCounter <= ProgramCounter + 8'd1;
+        end
+        // stall (no flush): PC holds its value (no assignment)
+      end
+    end
+  // =============================================================================
+  // PROGRAM COUNTER
+  // =============================================================================
+
 
   // =============================================================================
   // REGISTER FILE  (8 × 16-bit, R0 hardwired to zero)
@@ -60,431 +82,429 @@ module cpu (
   // Write-before-read: if reading and writing the same address simultaneously,
   // the NEW (write) value is returned, eliminating the WB→ID forwarding path.
   // =============================================================================
-  reg [15:0] regFile [0:7];
-  integer regFileIndex;
-  initial begin
-    for (regFileIndex = 0; regFileIndex < 8; regFileIndex = regFileIndex + 1)
-      regFile[regFileIndex] = 16'h0;
-  end
+    reg [15:0] regFile [0:7];
+    integer regFileIndex;
+    initial begin
+      for (regFileIndex = 0; regFileIndex < 8; regFileIndex = regFileIndex + 1)
+        regFile[regFileIndex] = 16'h0;
+    end
+  // =============================================================================
+  // REGISTER FILE
+  // =============================================================================
+
 
   // =============================================================================
   // ─── STAGE 1: INSTRUCTION FETCH (IF) ─────────────────────────────────────────
   // =============================================================================
-  // imem_addr = programCounter (combinational, above).
   // The returned imem_data is latched into IF/ID on the next rising edge.
+  // IF stage drives the instruction memory address (imem_addr) combinationally
+  // =============================================================================
+    assign imem_addr = ProgramCounter;
 
-  // ── IF/ID pipeline register ───────────────────────────────────────────────────
-  reg [7:0]  FetchDecode_ProgramCounter;
-  reg [15:0] FetchDecode_Instr;
+    // ── InstructionFetch => InstructionDecode pipeline registers ───────────────
+    reg [7:0]  StageII_PC;
+    reg [15:0] StageII_Instr;
+
+    always @(posedge clk) begin
+      if (!resetn) begin
+        // ── Reset every pipeline register and the PC ───────────────────────────
+        StageII_PC       <=  8'h0;
+        StageII_Instr    <= `NOP_INSTR;
+      end else if (halted) begin
+        // ── CPU halted: freeze all state, assert halted output ─────────────────
+      end else begin
+        if (flush) begin
+          // ── Branch/Jump taken: discard incorrectly fetched instruction ───────
+          StageII_PC     <=  ProgramCounter;
+          StageII_Instr  <= `NOP_INSTR;
+        end else if (!stall) begin
+          // ── Normal advancing through the program ───────────────────────────── 
+          StageII_PC     <=  ProgramCounter;
+          StageII_Instr  <=  imem_data;
+        end
+      end
+    end
+  // =============================================================================
+  // ─── STAGE 1: INSTRUCTION FETCH (IF) ─────────────────────────────────────────
+  // =============================================================================
+
 
   // =============================================================================
   // ─── STAGE 2: INSTRUCTION DECODE (ID) ────────────────────────────────────────
   // =============================================================================
-  // Decode the instruction in FetchDecode_Instr, read the register file, generate
-  // the immediate value, and produce control signals.  Also: hazard detection.
-
-  wire [3:0] Decode_Opcode = FetchDecode_Instr[15:12];
-
-  // ── Instruction-class flags (combinational) ───────────────────────────────────
-  wire Decode_isRType  = (Decode_Opcode <= 4'h6);
-  wire Decode_isBranch = (Decode_Opcode == `OP_BEQ || Decode_Opcode == `OP_BNE);
-  wire Decode_isStore  = (Decode_Opcode == `OP_SW);
-  wire Decode_isJump   = (Decode_Opcode == `OP_JMP || Decode_Opcode == `OP_JALR);
-  wire Decode_isLI     = (Decode_Opcode == `OP_LI);
-  wire Decode_isJmp    = (Decode_Opcode == `OP_JMP);
-  wire Decode_isSys    = (Decode_Opcode == `OP_SYS);
-
-  // ── Register address decode ───────────────────────────────────────────────────
-  //
-  //  Encoding quirks that differ from the default [rd|rs1|rs2] layout:
-  //    B-type  (BEQ/BNE): rs1=[11:9], rs2=[8:6]   (no rd, two sources)
-  //    S-type  (SW):      rs2=[11:9], rs1=[8:6]   (data register in the rd slot)
-  //    J-type  (JMP):     rd =[11:9], imm9=[8:0]  (no source registers)
-  //
-  //  We normalise here so that Decode_SrcReg1 and Decode_SrcReg2 always point to
-  //  the correct logical source, regardless of encoding type.
-
-  wire [2:0] Decode_DestReg  = FetchDecode_Instr[11:9]; // destination (all formats)
-
-  wire [2:0] Decode_SrcReg1 =
-    Decode_isBranch ? FetchDecode_Instr[11:9] :         // B-type: rs1 is in [11:9]
-                      FetchDecode_Instr[8:6];           // everything else: rs1 in [8:6]
-
-  wire [2:0] Decode_SrcReg2 =
-    Decode_isBranch ? FetchDecode_Instr[8:6]  :         // B-type: rs2 in [8:6]
-    Decode_isRType  ? FetchDecode_Instr[5:3]  :         // R-type: rs2 in [5:3]
-    Decode_isStore  ? FetchDecode_Instr[11:9] :         // S-type: data reg in [11:9]
-                      3'd0;                             // I/J/U/SYS: no rs2
-
-  // ── Immediate generation ──────────────────────────────────────────────────────
-  wire [15:0] Decode_imm6bit         = {{10{FetchDecode_Instr[5]}}, FetchDecode_Instr[5:0]}; // sext
-  wire [15:0] Decode_imm9bit_signExt = {{7{FetchDecode_Instr[8]}},  FetchDecode_Instr[8:0]}; // sext (JMP)
-  wire [15:0] Decode_imm9bit_zeroExt = {7'h0,                       FetchDecode_Instr[8:0]}; // zext (LI)
-
-  wire [15:0] Decode_imm =
-    Decode_isJmp ? Decode_imm9bit_signExt :
-    Decode_isLI  ? Decode_imm9bit_zeroExt :
-                   Decode_imm6bit;                      // I, S, B types all use imm6
-
-  // ── Register file read (async, with write-before-read forwarding) ─────────────
-  // WB writes regFile[] and also drives WriteBack_Result (declared later in WB section).
-  // For the write-before-read trick, we need to know what WB is writing right now.
-  // That's captured via: WriteBack_WriteEnable, WriteBack_WriteRegAddr, WriteBack_WriteData — wired in the WB section.
-  wire        WriteBack_WriteEnable;       // declared at bottom; forward-referenced here
-  wire [2:0]  WriteBack_WriteRegAddr;
-  wire [15:0] WriteBack_WriteData;
-
-  wire [15:0] Decode_SrcReg1_Data =
-    (Decode_SrcReg1 == 3'd0)                                              ? 16'h0 :
-    (WriteBack_WriteEnable && WriteBack_WriteRegAddr == Decode_SrcReg1)   ? WriteBack_WriteData :
-                                                                            regFile[Decode_SrcReg1];
-
-  wire [15:0] Decode_SrcReg2_Data =
-    (Decode_SrcReg2 == 3'd0)                                              ? 16'h0 :
-    (WriteBack_WriteEnable && WriteBack_WriteRegAddr == Decode_SrcReg2)   ? WriteBack_WriteData :
-                                                                            regFile[Decode_SrcReg2];
-
-  // ── Control signal decode ─────────────────────────────────────────────────────
-  // These travel through the pipeline alongside the data.
-  // Safe defaults = NOP (no register write, no memory, no branch).
-  reg        CTRL_DestRegWrite;   // write result to DestReg in WB
-  reg        CTRL_MemRead;        // load from data memory (LW)
-  reg        CTRL_MemWrite;       // store to data memory (SW)
-  reg        CTRL_Branch;         // conditional branch
-  reg        CTRL_Jump;           // unconditional jump (JMP or JALR)
-  reg        CTRL_ALU_B;          // 0 = SrcReg2, 1 = immediate as ALU B-operand
-  reg        CTRL_MemToReg;       // 0 = ALU result to WB, 1 = memory data to WB
-  reg [2:0]  CTRL_ALUOpcode;      // ALU operation code
-  reg        CTRL_LinkDestReg;    // write PC+1 to DestReg (JMP with link, JALR)
-  reg        CTRL_BranchFlag;     // 0 = branch-if-zero (BEQ), 1 = branch-if-nonzero (BNE)
-  reg        CTRL_JumpLink;       // JALR: jump target = SrcReg1 + imm (not PC + imm)
-  reg        CTRL_HALT;           // HALT instruction
-
-  always @(*) begin
-    // Safe default: NOP
-    CTRL_DestRegWrite = 1'b0;
-    CTRL_MemRead      = 1'b0;
-    CTRL_MemWrite     = 1'b0;
-    CTRL_Branch       = 1'b0;
-    CTRL_Jump         = 1'b0;
-    CTRL_ALU_B        = 1'b0;
-    CTRL_MemToReg     = 1'b0;
-    CTRL_ALUOpcode    = `ALU_ADD;
-    CTRL_LinkDestReg  = 1'b0;
-    CTRL_BranchFlag   = 1'b0;
-    CTRL_JumpLink     = 1'b0;
-    CTRL_HALT         = 1'b0;
-
-    case (Decode_Opcode)
-      `OP_ADD:  begin CTRL_DestRegWrite=1;                    CTRL_ALUOpcode=`ALU_ADD;                                                        end
-      `OP_SUB:  begin CTRL_DestRegWrite=1;                    CTRL_ALUOpcode=`ALU_SUB;                                                        end
-      `OP_AND:  begin CTRL_DestRegWrite=1;                    CTRL_ALUOpcode=`ALU_AND;                                                        end
-      `OP_OR:   begin CTRL_DestRegWrite=1;                    CTRL_ALUOpcode=`ALU_OR;                                                         end
-      `OP_XOR:  begin CTRL_DestRegWrite=1;                    CTRL_ALUOpcode=`ALU_XOR;                                                        end
-      `OP_SHL:  begin CTRL_DestRegWrite=1;                    CTRL_ALUOpcode=`ALU_SHL;                                                        end
-      `OP_SHR:  begin CTRL_DestRegWrite=1;                    CTRL_ALUOpcode=`ALU_SHR;                                                        end
-      `OP_ADDI: begin CTRL_DestRegWrite=1; CTRL_ALU_B=1;      CTRL_ALUOpcode=`ALU_ADD;                                                        end
-      `OP_LW:   begin CTRL_DestRegWrite=1; CTRL_ALU_B=1;      CTRL_ALUOpcode=`ALU_ADD;  CTRL_MemRead=1;  CTRL_MemToReg=1;                     end
-      `OP_SW:   begin                      CTRL_ALU_B=1;      CTRL_ALUOpcode=`ALU_ADD;  CTRL_MemWrite=1;                                      end
-      `OP_BEQ:  begin CTRL_Branch=1;                          CTRL_ALUOpcode=`ALU_SUB;                                                        end
-      `OP_BNE:  begin CTRL_Branch=1;       CTRL_BranchFlag=1; CTRL_ALUOpcode=`ALU_SUB;                                                        end
-      `OP_JMP:  begin CTRL_DestRegWrite=1;                                              CTRL_Jump=1;     CTRL_LinkDestReg=1;                  end
-      `OP_LI:   begin CTRL_DestRegWrite=1; CTRL_ALU_B=1;      CTRL_ALUOpcode=`ALU_PASS;                                                       end
-      `OP_JALR: begin CTRL_DestRegWrite=1; CTRL_ALU_B=1;      CTRL_ALUOpcode=`ALU_ADD;  CTRL_Jump=1;     CTRL_LinkDestReg=1; CTRL_JumpLink=1; end
-      `OP_SYS:  begin if (FetchDecode_Instr[11:0] == 12'd1)   CTRL_HALT = 1'b1;                                                               end
-      default: ; // unknown opcode → NOP (safe)
-    endcase
-  end
-
+  // Decode the instruction in inter-stage instruction register,
+  // read the register file, generate the immediate value,
+  // and produce control signals.  Also: hazard detection.
   // =============================================================================
-  // ID/EX PIPELINE REGISTER  (declared here; hazard unit reads DecodeExec_MemRead)
-  // =============================================================================
-  reg [7:0]  DecodeExec_ProgramCounter;
-  reg [2:0]  DecodeExec_DestRegAddr;
-  reg [2:0]  DecodeExec_SrcReg1;
-  reg [2:0]  DecodeExec_SrcReg2;
-  reg [15:0] DecodeExec_SrcReg1_Data;
-  reg [15:0] DecodeExec_SrcReg2_Data;
-  reg [15:0] DecodeExec_Immediate;
-  // control signals carried into EX
-  reg        DecodeExec_DestRegWrite;
-  reg        DecodeExec_MemRead;
-  reg        DecodeExec_MemWrite;
-  reg        DecodeExec_Branch;
-  reg        DecodeExec_Jump;
-  reg        DecodeExec_ALUSrc;
-  reg        DecodeExec_MemToReg;
-  reg [2:0]  DecodeExec_ALUOpcode;
-  reg        DecodeExec_LinkDestReg;
-  reg        DecodeExec_NEQBranch;
-  reg        DecodeExec_JumpLink;
-  reg        DecodeExec_HALT;
+    wire [3:0] StageII_Opcode = StageII_Instr[15:12];
 
-  // =============================================================================
-  // HAZARD DETECTION  (load-use stall)
-  // =============================================================================
-  // Triggered when the instruction currently in EX (id_ex) is a LOAD and
-  // the instruction currently in ID (if_id) reads the loaded register.
-  // Effect: stall PC and IF/ID for 1 cycle, insert NOP bubble into EX.
-  // After the stall, the loaded value arrives via MEM/WB forwarding.
-  // =============================================================================
-  wire stall = DecodeExec_MemRead
-            && (DecodeExec_DestRegAddr != 3'd0)
-            && (DecodeExec_DestRegAddr == Decode_SrcReg1 || DecodeExec_DestRegAddr == Decode_SrcReg2);
+    // ── Instruction-class flags (combinational) ───────────────────────────────────
+    wire StageII_isRegType = (StageII_Opcode <=  4'h6);
+    wire StageII_isBranch  = (StageII_Opcode == `OP_BEQ || StageII_Opcode == `OP_BNE);
+    wire StageII_isStore   = (StageII_Opcode == `OP_SW);
+    wire StageII_isJump    = (StageII_Opcode == `OP_JMP || StageII_Opcode == `OP_JALR);
+    wire StageII_isJmp     = (StageII_Opcode == `OP_JMP);
+    wire StageII_isLoadImm = (StageII_Opcode == `OP_LI);
+    wire StageII_isSys     = (StageII_Opcode == `OP_SYS);
 
-  // =============================================================================
-  // EX/MEM PIPELINE REGISTER  (declared early so forwarding unit can see it)
-  // =============================================================================
-  reg [2:0]  ExecMem_DestReg;
-  reg [15:0] ExecMem_ALUResult;
-  reg [15:0] ExecMem_SrcReg2_Data;    // forwarded store data (for SW in MEM)
-  reg        ExecMem_RegWrite;
-  reg        ExecMem_MemRead;
-  reg        ExecMem_MemWrite;
-  reg        ExecMem_MemToReg;
-  reg        ExecMem_HALT;
+    // ── Register address decode ───────────────────────────────────────────────────
+    //  Encoding quirks that differ from the default [rd|rs1|rs2] layout:
+    //    S-type  (SW):      rs2=[11:9], rs1=[8:6]   (data register in the rd slot)
+    //    J-type  (JMP):     rd =[11:9], imm9=[8:0]  (no source registers)
+    wire [2:0] StageII_destRegIndex = StageII_Instr[11:9];
+    wire [2:0] StageII_srcReg1Index = StageII_Instr[8:6];
+    wire [2:0] StageII_srcReg2Index = 
+      StageII_isRegType ? StageII_Instr[5:3]  :   // In Reg-to-Reg, rs2 is in bits 5 to 3
+      StageII_isStore   ? StageII_Instr[11:9] :   // In Store-type, rs2 is in bits 11 to 9
+      StageII_isBranch  ? StageII_Instr[11:9] :   // In Branches, rs2 is in bits 11 to 9
+      3'd0;                                       // Anywhere else, there's no rs2
 
+    // ── Immediate value generation ──────────────────────────────────────────────── 
+    wire [15:0] StageII_immValue =
+      StageII_isJmp ? {{7{StageII_Instr[8]}},  StageII_Instr[8:0]} :
+      StageII_isLoadImm ? {7'h0,               StageII_Instr[8:0]} :
+      {{10{StageII_Instr[5]}}, StageII_Instr[5:0]};
+
+    // ── Register file read (async, with write-before-read forwarding) ─────────────
+    // For the write-before-read trick, we need to know what WB is writing right now.
+    // There are three cases left to treat:
+    // 1 - if the searched for register is R0, then we simply return the value 0
+    // 2 - if StageV (WB) needs to write to the same register we need to access
+    // in StageII (ID), then we simply forward the new value coming from StageV
+    // 3 - otherwise, simply return the value inside the desired register
+    wire        StageV_writeEnable;
+    wire [2:0]  StageV_writeRegIndex;
+    wire [15:0] StageV_writeData;
+    wire forwardSrcReg1 = StageV_writeEnable && (StageV_writeRegIndex == StageII_srcReg1Index);
+    wire forwardSrcReg2 = StageV_writeEnable && (StageV_writeRegIndex == StageII_srcReg2Index);
+
+    wire [15:0] StageII_srcReg1Data =
+      (StageII_srcReg1Index == 3'd0) ? 16'h0 :
+      (forwardSrcReg1) ? StageV_writeData :
+      regFile[StageII_srcReg1Index];
+
+    wire [15:0] StageII_srcReg2Data =
+      (StageII_srcReg2Index == 3'd0) ? 16'h0 :
+      (forwardSrcReg2) ? StageV_writeData :
+      regFile[StageII_srcReg2Index];
+
+    // ── Control signal decode ─────────────────────────────────────────────────────
+    // These travel through the pipeline alongside the data.
+    // Safe defaults = NOP (no register write, no memory, no branch).
+    reg        CTRL_destRegWrite;   // write result to destReg in StageV (WriteBack)
+    reg        CTRL_memRead;        // load from data memory (LW)
+    reg        CTRL_memWrite;       // store to data memory (SW)
+    reg        CTRL_Branch;         // conditional branch (BEQ or BNE)
+    reg        CTRL_Jump;           // unconditional jump (JMP or JALR)
+    reg        CTRL_ALUBSel;        // (0 = srcReg2, 1 = immediate) => ALU B-operand
+    reg        CTRL_memToReg;       // (0 = ALU result, 1 = memory data) => WriteBack
+    reg [2:0]  CTRL_ALUOpcode;      // ALU operation code
+    reg        CTRL_linkDestReg;    // write PC+1 to destReg (JMP with link, JALR)
+    reg        CTRL_branchFlag;     // 0 = branch-if-zero (BEQ), 1 = branch-if-nonzero (BNE)
+    reg        CTRL_jumpLink;       // JALR: jump target = srcReg1 + imm (not PC + imm)
+    reg        CTRL_HALT;           // HALT instruction
+
+    always @(*) begin
+      // Safe default: NOP
+      CTRL_destRegWrite = 1'b0;
+      CTRL_memRead      = 1'b0;
+      CTRL_memWrite     = 1'b0;
+      CTRL_Branch       = 1'b0;
+      CTRL_Jump         = 1'b0;
+      CTRL_ALUBSel      = 1'b0;
+      CTRL_memToReg     = 1'b0;
+      CTRL_ALUOpcode    = `ALU_ADD;
+      CTRL_linkDestReg  = 1'b0;
+      CTRL_branchFlag   = 1'b0;
+      CTRL_jumpLink     = 1'b0;
+      CTRL_HALT         = 1'b0;
+
+      case (StageII_Opcode)
+        `OP_ADD:  begin CTRL_destRegWrite=1;                    CTRL_ALUOpcode=`ALU_ADD;                                                        end
+        `OP_SUB:  begin CTRL_destRegWrite=1;                    CTRL_ALUOpcode=`ALU_SUB;                                                        end
+        `OP_AND:  begin CTRL_destRegWrite=1;                    CTRL_ALUOpcode=`ALU_AND;                                                        end
+        `OP_OR:   begin CTRL_destRegWrite=1;                    CTRL_ALUOpcode=`ALU_OR;                                                         end
+        `OP_XOR:  begin CTRL_destRegWrite=1;                    CTRL_ALUOpcode=`ALU_XOR;                                                        end
+        `OP_SHL:  begin CTRL_destRegWrite=1;                    CTRL_ALUOpcode=`ALU_SHL;                                                        end
+        `OP_SHR:  begin CTRL_destRegWrite=1;                    CTRL_ALUOpcode=`ALU_SHR;                                                        end
+        `OP_ADDI: begin CTRL_destRegWrite=1; CTRL_ALUBSel=1;    CTRL_ALUOpcode=`ALU_ADD;                                                        end
+        `OP_LW:   begin CTRL_destRegWrite=1; CTRL_ALUBSel=1;    CTRL_ALUOpcode=`ALU_ADD;  CTRL_memRead=1;  CTRL_memToReg=1;                     end
+        `OP_SW:   begin                      CTRL_ALUBSel=1;    CTRL_ALUOpcode=`ALU_ADD;  CTRL_memWrite=1;                                      end
+        `OP_BEQ:  begin CTRL_Branch=1;                          CTRL_ALUOpcode=`ALU_SUB;                                                        end
+        `OP_BNE:  begin CTRL_Branch=1;       CTRL_branchFlag=1; CTRL_ALUOpcode=`ALU_SUB;                                                        end
+        `OP_JMP:  begin CTRL_destRegWrite=1;                                              CTRL_Jump=1;     CTRL_linkDestReg=1;                  end
+        `OP_LI:   begin CTRL_destRegWrite=1; CTRL_ALUBSel=1;    CTRL_ALUOpcode=`ALU_PASS;                                                       end
+        `OP_JALR: begin CTRL_destRegWrite=1; CTRL_ALUBSel=1;    CTRL_ALUOpcode=`ALU_ADD;  CTRL_Jump=1;     CTRL_linkDestReg=1; CTRL_jumpLink=1; end
+        `OP_SYS:  begin if (StageII_Instr[11:0] == 12'd1)   CTRL_HALT = 1'b1;                                                               end
+        default: ; // unknown opcode → NOP (safe)
+      endcase
+    end
+
+    // ── InstructionDecode => ExecuteUnit pipeline registers ────────────────────
+    reg [7:0]  StageIII_PC;
+    reg [2:0]  StageIII_destRegIndex;
+    reg [2:0]  StageIII_srcReg1Index;
+    reg [2:0]  StageIII_srcReg2Index;
+    reg [15:0] StageIII_srcReg1Data;
+    reg [15:0] StageIII_srcReg2Data;
+    reg [15:0] StageIII_immValue;
+    // ── Control signal decode ──────────────────────────────────────────────────
+    reg        StageIII_destRegWrite;
+    reg        StageIII_memRead;
+    reg        StageIII_memWrite;
+    reg        StageIII_Branch;
+    reg        StageIII_Jump;
+    reg        StageIII_ALUBSel;
+    reg        StageIII_memToReg;
+    reg [2:0]  StageIII_ALUOpcode;
+    reg        StageIII_linkDestReg;
+    reg        StageIII_branchFlag;
+    reg        StageIII_jumpLink;
+    reg        StageIII_HALT;
+
+    always @(posedge clk) begin
+      if (!resetn) begin
+        // ── Reset every pipeline register and the PC ───────────────────────────
+        StageIII_PC           <= 8'h0;
+        StageIII_destRegIndex <= 3'd0;  StageIII_srcReg1Index <= 3'd0;
+        StageIII_srcReg2Index <= 3'd0;  StageIII_srcReg1Data  <= 16'd0;
+        StageIII_srcReg2Data  <= 16'd0; StageIII_immValue     <= 16'h0;
+        StageIII_destRegWrite <= 1'b0;  StageIII_memRead      <= 1'b0;
+        StageIII_memWrite     <= 1'b0;  StageIII_Branch       <= 1'b0;
+        StageIII_Jump         <= 1'b0;  StageIII_ALUBSel      <= 1'b0;
+        StageIII_memToReg     <= 1'b0;  StageIII_ALUOpcode    <= `ALU_ADD;
+        StageIII_linkDestReg  <= 1'b0;  StageIII_branchFlag   <= 1'b0;
+        StageIII_jumpLink     <= 1'b0;  StageIII_HALT         <= 1'b0;
+      end else if (halted) begin
+        // ── CPU halted: freeze all state, assert halted output ─────────────────
+      end else begin
+        if (flush || stall) begin
+          // ── Flush OR Stall -> Insert NOP bubble in StageIII (Execute)
+          // ── Bubble: preserve addresses for debugging but zero all control ────
+          StageIII_PC           <= StageII_PC;
+          StageIII_destRegIndex <= 3'd0;  StageIII_srcReg1Index <= 3'd0;
+          StageIII_srcReg2Index <= 3'd0;  StageIII_srcReg1Data  <= 16'd0;
+          StageIII_srcReg2Data  <= 16'd0; StageIII_immValue     <= 16'h0;
+          StageIII_destRegWrite <= 1'b0;  StageIII_memRead      <= 1'b0;
+          StageIII_memWrite     <= 1'b0;  StageIII_Branch       <= 1'b0;
+          StageIII_Jump         <= 1'b0;  StageIII_ALUBSel      <= 1'b0;
+          StageIII_memToReg     <= 1'b0;  StageIII_ALUOpcode    <= `ALU_ADD;
+          StageIII_linkDestReg  <= 1'b0;  StageIII_branchFlag   <= 1'b0;
+          StageIII_jumpLink     <= 1'b0;  StageIII_HALT         <= 1'b0;
+        end else begin
+          // ── Normal advancing through the program ─────────────────────────────
+          StageIII_PC           <= StageII_PC;
+          StageIII_destRegIndex <= StageII_destRegIndex;
+          StageIII_srcReg1Index <= StageII_srcReg1Index;
+          StageIII_srcReg2Index <= StageII_srcReg2Index;
+          StageIII_srcReg1Data  <= StageII_srcReg1Data;
+          StageIII_srcReg2Data  <= StageII_srcReg2Data;
+          StageIII_immValue     <= StageII_immValue;
+          StageIII_destRegWrite <= CTRL_destRegWrite;
+          StageIII_memRead      <= CTRL_memRead;
+          StageIII_memWrite     <= CTRL_memWrite;
+          StageIII_Branch       <= CTRL_Branch;
+          StageIII_Jump         <= CTRL_Jump;
+          StageIII_ALUBSel      <= CTRL_ALUBSel;
+          StageIII_memToReg     <= CTRL_memToReg;
+          StageIII_ALUOpcode    <= CTRL_ALUOpcode;
+          StageIII_linkDestReg  <= CTRL_linkDestReg;
+          StageIII_branchFlag   <= CTRL_branchFlag;
+          StageIII_jumpLink     <= CTRL_jumpLink;
+          StageIII_HALT         <= CTRL_HALT;
+        end
+      end
+    end
+
+    // ── HAZARD DETECTION  (load-use stall) ─────────────────────────────────────
+    // Triggered when the instruction currently in StageIII (Execute) is a LOAD and
+    // the instruction currently in StageII (InstructionDecode) reads the loaded register.
+    // Effect: stall PC and IF/ID for 1 cycle, insert NOP bubble into EX.
+    // After the stall, the loaded value arrives via StageV (WriteBack) forwarding.
+    wire stall = StageIII_memRead && (StageIII_destRegIndex != 3'd0)
+              && (StageIII_destRegIndex == StageII_srcReg1Index
+              || StageIII_destRegIndex == StageII_srcReg2Index);
+
+    // ── ExecuteUnit => MemoryFetch pipeline registers ──────────────────────────
+    // (needed early such that forwarding unit can see it)
+    reg [2:0]  StageIV_destRegIndex;
+    reg [15:0] StageIV_ALUResult;
+    reg [15:0] StageIV_srcReg2Data;
+    reg        StageIV_destRegWrite;
+    reg        StageIV_memRead;
+    reg        StageIV_memWrite;
+    reg        StageIV_memToReg;
+    reg        StageIV_HALT;
+
+    // ── MemoryFetch => WriteBack pipeline registers ────────────────────────────
+    // (needed early such that forwarding unit can see it)
+    reg [2:0]  StageV_destRegIndex;
+    reg [15:0] StageV_ALUResult;
+    reg [15:0] StageV_memDataFromDMEM;
+    reg        StageV_destRegWrite;
+    reg        StageV_memToReg;
+    reg        StageV_HALT;
   // =============================================================================
-  // MEM/WB PIPELINE REGISTER
+  // ─── STAGE 2: INSTRUCTION DECODE (ID) ────────────────────────────────────────
   // =============================================================================
-  reg [2:0]  MemWB_DestReg;
-  reg [15:0] MemWB_ALUResult;
-  reg [15:0] MemWB_MemData;
-  reg        MemWB_RegWrite;
-  reg        MemWB_MemToReg;
-  reg        MemWB_HALT;
+
 
   // =============================================================================
   // ─── STAGE 3: EXECUTE (EX) ───────────────────────────────────────────────────
   // =============================================================================
   // Forwarding → operand selection → ALU → branch/jump decision.
 
-  // ── WB result (for forwarding) ────────────────────────────────────────────────
-  wire [15:0] WriteBack_Result = MemWB_MemToReg ? MemWB_MemData : MemWB_ALUResult;
+    // ── WB result (for forwarding) ─────────────────────────────────────────────
+    wire [15:0] StageV_Result = StageV_memToReg ? StageV_memDataFromDMEM : StageV_ALUResult;
 
-  // ── Forwarding unit ───────────────────────────────────────────────────────────
-  //
-  //   forward_x encoding:
-  //     2'b00  no forwarding  →  use value from ID/EX pipeline register
-  //     2'b01  MEM/WB stage   →  WriteBack_Result    (2 cycles back)
-  //     2'b10  EX/MEM stage   →  ExecMem_ALUResult  (1 cycle back)
-  //
-  //   EX/MEM takes priority over MEM/WB when both match (closer = fresher).
+    // ── Forwarding unit ────────────────────────────────────────────────────────
+    //   forward_x encoding:
+    //     2'b00  no forwarding         →  use value from StageIII (Execute) pipeline register
+    //     2'b01  StageV (WriteBack)    →  use StageV_memDataFromDMEM   (2 cycles back)
+    //     2'b10  StageIV (MemoryFetch) →  use StageIV_ALUResult        (1 cycle back)
+    //   StageIV takes priority over StageV when both match (closer = fresher).
 
-  wire [1:0] forward_a =
-    (ExecMem_RegWrite && ExecMem_DestReg != 3'd0 && ExecMem_DestReg == DecodeExec_SrcReg1) ? 2'b10 :
-    (MemWB_RegWrite   && MemWB_DestReg   != 3'd0 && MemWB_DestReg   == DecodeExec_SrcReg1) ? 2'b01 :
-    2'b00;
+    wire [1:0] forward_a =
+      (StageIV_destRegWrite && StageIV_destRegIndex != 3'd0 && StageIV_destRegIndex == StageIII_srcReg1Index) ? 2'b10 :
+      (StageV_destRegWrite  && StageV_destRegIndex  != 3'd0 && StageV_destRegIndex  == StageIII_srcReg1Index) ? 2'b01 :
+      2'b00;
 
-  wire [1:0] forward_b =
-    (ExecMem_RegWrite && ExecMem_DestReg != 3'd0 && ExecMem_DestReg == DecodeExec_SrcReg2) ? 2'b10 :
-    (MemWB_RegWrite   && MemWB_DestReg   != 3'd0 && MemWB_DestReg   == DecodeExec_SrcReg2) ? 2'b01 :
-    2'b00;
+    wire [1:0] forward_b =
+      (StageIV_destRegWrite && StageIV_destRegIndex != 3'd0 && StageIV_destRegIndex == StageIII_srcReg2Index) ? 2'b10 :
+      (StageV_destRegWrite  && StageV_destRegIndex  != 3'd0 && StageV_destRegIndex  == StageIII_srcReg2Index) ? 2'b01 :
+      2'b00;
 
-  // ── Forwarded operand values ──────────────────────────────────────────────────
-  wire [15:0] Exec_Forward_SrcReg1 =
-    (forward_a == 2'b10) ? ExecMem_ALUResult :
-    (forward_a == 2'b01) ? WriteBack_Result  :
-                           DecodeExec_SrcReg1_Data;
+    // ── Forwarded operand values ───────────────────────────────────────────────
+    wire [15:0] StageIV_forwardedSrcReg1Data =
+      (forward_a == 2'b10) ? StageIV_ALUResult :
+      (forward_a == 2'b01) ? StageV_Result :
+      StageIII_srcReg1Data;
 
-  wire [15:0] Exec_Forward_SrcReg2 =
-    (forward_b == 2'b10) ? ExecMem_ALUResult :
-    (forward_b == 2'b01) ? WriteBack_Result  :
-                           DecodeExec_SrcReg2_Data;
+    wire [15:0] StageIV_forwardedSrcReg2Data =
+      (forward_b == 2'b10) ? StageIV_ALUResult :
+      (forward_b == 2'b01) ? StageV_Result :
+      StageIII_srcReg2Data;
 
-  // ── ALU inputs ────────────────────────────────────────────────────────────────
-  wire [15:0] ALU_A = Exec_Forward_SrcReg1;
-  wire [15:0] ALU_B = DecodeExec_ALUSrc ? DecodeExec_Immediate : Exec_Forward_SrcReg2;
-  //                                      ^immediate             ^register
+    // ── ALU inputs ─────────────────────────────────────────────────────────────
+    wire [15:0] ALU_A = StageIV_forwardedSrcReg1Data;
+    wire [15:0] ALU_B = StageIII_ALUBSel ? StageIII_immValue : StageIV_forwardedSrcReg2Data;
 
-  // ── ALU ───────────────────────────────────────────────────────────────────────
-  wire [15:0] ALU_Result;
-  wire        ALU_ZeroFlag;
+    // ── ALU instantiation ──────────────────────────────────────────────────────
+    wire [15:0] ALUResult;
+    wire        ALUZeroFlag;
 
-  alu u_alu (
-    .a      (ALU_A),
-    .b      (ALU_B),
-    .op     (DecodeExec_ALUOpcode),
-    .result (ALU_Result),
-    .zero   (ALU_ZeroFlag)
-  );
+    alu exec_alu (
+      .a      (ALU_A),
+      .b      (ALU_B),
+      .op     (StageIII_ALUOpcode),
+      .result (ALUResult),
+      .zero   (ALUZeroFlag)
+    );
 
-  // ── Branch / jump decision ────────────────────────────────────────────────────
-  //
-  //   For branches (BEQ/BNE): the ALU computes rs1 - rs2.
-  //     BEQ → branch if result == 0  (ALU_ZeroFlag && !DecodeExec_NEQBranch)
-  //     BNE → branch if result != 0  (!ALU_ZeroFlag && DecodeExec_NEQBranch)
-  //
-  //   For unconditional jumps (JMP, JALR): always taken.
+    // ── Branch / jump decision ─────────────────────────────────────────────────
+    //   For branches (BEQ/BNE): the ALU computes srcReg1 - srcReg2.
+    //     BEQ → branch if result == 0  (!StageIII_branchFlag && ALUZeroFlag)
+    //     BNE → branch if result != 0  ( StageIII_branchFlag && !ALUZeroFlag)
+    //   For unconditional jumps (JMP, JALR): always taken.
+    wire branchTaken = StageIII_Branch && (StageIII_branchFlag ? !ALUZeroFlag : ALUZeroFlag);
+    wire doJump      = StageIII_Jump || branchTaken;
+    wire flush       = doJump;
 
-  wire branch_taken = DecodeExec_Branch && (DecodeExec_NEQBranch ? !ALU_ZeroFlag : ALU_ZeroFlag);
-  wire do_jump      = DecodeExec_Jump || branch_taken;
+    // ── Branch / jump target address & StageIII_Result value ───────────────────
+    //   BEQ / BNE / JMP  →  (PC_of_branch + 1) + sext(imm)
+    //   JALR             →  srcReg1 + sext(imm6)
+    // All targets are 8-bit (word address into 256-word memory).
+    // PC+1 zero-extended to 16 bits (word address of instruction after the jump).
+    wire [7:0] StageIII_branchTarget = StageIII_jumpLink ?
+      (StageIV_forwardedSrcReg1Data[7:0] + StageIII_immValue[7:0]) :
+      (StageIII_PC + 8'd1                + StageIII_immValue[7:0]);
+    wire [15:0] StageIII_linkValue = {8'h0, StageIII_PC + 8'd1};
+    wire [15:0] StageIII_Result    = StageIII_linkDestReg ? StageIII_linkValue : ALUResult;
 
-  // When a branch or jump resolves in EX, we must flush the 2 instructions
-  // that were incorrectly fetched into IF and ID behind the branch.
-  wire flush = do_jump;
+    always @(posedge clk) begin
+      if (!resetn) begin
+        StageIV_destRegIndex <= 3'd0;   StageIV_ALUResult    <= 16'h0;
+        StageIV_srcReg2Data  <= 16'h0;  StageIV_destRegWrite <= 1'b0;
+        StageIV_memRead      <= 1'b0;   StageIV_memWrite     <= 1'b0;
+        StageIV_memToReg     <= 1'b0;   StageIV_HALT         <= 1'b0;
+      end else if (halted) begin
+        // ── CPU halted: freeze all state ───────────────────────────────────────
+      end else begin
+        StageIV_destRegIndex <= StageIII_destRegIndex;
+        StageIV_ALUResult    <= StageIII_Result;
+        StageIV_srcReg2Data  <= StageIV_forwardedSrcReg2Data;
+        StageIV_destRegWrite <= StageIII_destRegWrite;
+        StageIV_memRead      <= StageIII_memRead;
+        StageIV_memWrite     <= StageIII_memWrite;
+        StageIV_memToReg     <= StageIII_memToReg;
+        StageIV_HALT         <= StageIII_HALT;
+      end
+    end
+  // =============================================================================
+  // ─── STAGE 3: EXECUTE (EX) ───────────────────────────────────────────────────
+  // =============================================================================
 
-  // ── Branch/jump target address ────────────────────────────────────────────────
-  //
-  //   BEQ / BNE / JMP  →  (PC_of_branch + 1) + sext(imm)
-  //   JALR             →  rs1 + sext(imm6)
-  //
-  // All targets are 8-bit (word address into 256-word memory).
-  wire [7:0] Exec_BranchTarget =
-    DecodeExec_JumpLink ? (Exec_Forward_SrcReg1[7:0] + DecodeExec_Immediate[7:0]) :
-                          (DecodeExec_ProgramCounter + 8'd1  + DecodeExec_Immediate[7:0]);
-
-  // ── Link value: return address for JMP/JALR ───────────────────────────────────
-  // PC+1 zero-extended to 16 bits (word address of instruction after the jump).
-  wire [15:0] Exec_LinkVal = {8'h0, DecodeExec_ProgramCounter + 8'd1};
-
-  // ── Result sent to EX/MEM ─────────────────────────────────────────────────────
-  // For link instructions (JMP/JALR): write PC+1 to rd.
-  // For all others: write ALU result.
-  wire [15:0] Exec_Result = DecodeExec_LinkDestReg ? Exec_LinkVal : ALU_Result;
 
   // =============================================================================
   // ─── STAGE 4: MEMORY ACCESS (MEM) ────────────────────────────────────────────
   // =============================================================================
   // Data memory is accessed combinationally (async read).
-  // Write (SW) is controlled by DataMem_WriteEnable; the memory latches on the rising edge.
-  // Read data (LW) is available combinationally and latched into MEM/WB.
-
-  assign DataMem_Addr         = ExecMem_ALUResult[7:0];   // effective address from ALU
-  assign DataMem_WriteData    = ExecMem_SrcReg2_Data;     // forwarded store data
-  assign DataMem_WriteEnable  = ExecMem_MemWrite;
-
+  // Write (SW) is controlled by dmem_we; memory latches on rising edge.
+  // Read data (LW) is available combinationally and latched into StageV.
   // =============================================================================
-  // ─── STAGE 5: WRITE BACK (WB) — wired outputs for register file & ID fwd ────
-  // =============================================================================
-  assign WriteBack_WriteEnable  = MemWB_RegWrite && (MemWB_DestReg != 3'd0) && !halted;
-  assign WriteBack_WriteRegAddr = MemWB_DestReg;
-  assign WriteBack_WriteData    = WriteBack_Result;    // WriteBack_Result defined earlier
-
-  // =============================================================================
-  // ALL PIPELINE REGISTERS — single synchronous always block
-  // =============================================================================
-  // Writing all registers in one always block ensures a single source of truth
-  // for the reset condition and makes the priority of stall/flush explicit.
-  // =============================================================================
-  always @(posedge clk) begin
-    if (!resetn) begin
-      // ── Reset every pipeline register and the PC ──────────────────────
-      programCounter              <= 8'h00;
-      halted                      <= 1'b0;
-
-      FetchDecode_ProgramCounter  <= 8'h00;
-      FetchDecode_Instr           <= `NOP_INSTR;
-
-      DecodeExec_ProgramCounter   <= 8'h00;
-      DecodeExec_DestRegAddr      <= 3'd0;   DecodeExec_SrcReg1       <= 3'd0;
-      DecodeExec_SrcReg2          <= 3'd0;   DecodeExec_SrcReg1_Data  <= 16'h0;
-      DecodeExec_SrcReg2_Data     <= 16'h0;  DecodeExec_Immediate     <= 16'h0;
-      DecodeExec_DestRegWrite     <= 1'b0;   DecodeExec_MemRead       <= 1'b0;
-      DecodeExec_MemWrite         <= 1'b0;   DecodeExec_Branch        <= 1'b0;
-      DecodeExec_Jump             <= 1'b0;   DecodeExec_ALUSrc        <= 1'b0;
-      DecodeExec_MemToReg         <= 1'b0;   DecodeExec_ALUOpcode     <= `ALU_ADD;
-      DecodeExec_LinkDestReg      <= 1'b0;   DecodeExec_NEQBranch     <= 1'b0;
-      DecodeExec_JumpLink         <= 1'b0;   DecodeExec_HALT          <= 1'b0;
-
-      ExecMem_DestReg             <= 3'd0;   ExecMem_ALUResult        <= 16'h0;
-      ExecMem_SrcReg2_Data        <= 16'h0;  ExecMem_RegWrite         <= 1'b0;
-      ExecMem_MemRead             <= 1'b0;   ExecMem_MemWrite         <= 1'b0;
-      ExecMem_MemToReg            <= 1'b0;   ExecMem_HALT             <= 1'b0;
-
-      MemWB_DestReg               <= 3'd0;   MemWB_ALUResult          <= 16'h0;
-      MemWB_MemData               <= 16'h0;  MemWB_RegWrite           <= 1'b0;
-      MemWB_MemToReg              <= 1'b0;   MemWB_HALT               <= 1'b0;
-
-    end else if (halted) begin
-      // ── CPU halted: freeze all state, assert halted output ─────────────
-      // Nothing changes. The testbench will see halted=1 and stop.
-
-    end else begin
-      // ══════════════════════════════════════════════════════════════════
-      // WRITE BACK (stage 5)
-      // ══════════════════════════════════════════════════════════════════
-      if (WriteBack_WriteEnable)
-        regFile[WriteBack_WriteRegAddr] <= WriteBack_WriteData;
-
-      halted <= MemWB_HALT;   // becomes 1 when HALT retires
-
-      // ══════════════════════════════════════════════════════════════════
-      // MEM/WB update  (captures MEM-stage outputs)
-      // ══════════════════════════════════════════════════════════════════
-      MemWB_DestReg               <= ExecMem_DestReg;
-      MemWB_ALUResult             <= ExecMem_ALUResult;
-      MemWB_MemData               <= dmem_rdata;        // combinational read from dmem
-      MemWB_RegWrite              <= ExecMem_RegWrite;
-      MemWB_MemToReg              <= ExecMem_MemToReg;
-      MemWB_HALT                  <= ExecMem_HALT;
-
-      // ══════════════════════════════════════════════════════════════════
-      // EX/MEM update  (captures EX-stage outputs)
-      // ══════════════════════════════════════════════════════════════════
-      ExecMem_DestReg             <= DecodeExec_DestRegAddr;
-      ExecMem_ALUResult           <= Exec_Result;
-      ExecMem_SrcReg2_Data        <= Exec_Forward_SrcReg2;        // forwarded store data
-      ExecMem_RegWrite            <= DecodeExec_DestRegWrite;
-      ExecMem_MemRead             <= DecodeExec_MemRead;
-      ExecMem_MemWrite            <= DecodeExec_MemWrite;
-      ExecMem_MemToReg            <= DecodeExec_MemToReg;
-      ExecMem_HALT                <= DecodeExec_HALT;
-
-      // ══════════════════════════════════════════════════════════════════
-      // ID/EX update  (captures ID-stage decoded values)
-      // flush OR stall → insert NOP bubble (zero all control signals)
-      // ══════════════════════════════════════════════════════════════════
-      if (flush || stall) begin
-        // Bubble: preserve addresses for debugging but zero all control
-        DecodeExec_ProgramCounter <= FetchDecode_ProgramCounter;
-        DecodeExec_DestRegAddr    <= 3'd0;     DecodeExec_SrcReg1       <= 3'd0;
-        DecodeExec_SrcReg2        <= 3'd0;     DecodeExec_SrcReg1_Data  <= 16'h0;
-        DecodeExec_SrcReg2_Data   <= 16'h0;    DecodeExec_Immediate     <= 16'h0;
-        DecodeExec_DestRegWrite   <= 1'b0;     DecodeExec_MemRead       <= 1'b0;
-        DecodeExec_MemWrite       <= 1'b0;     DecodeExec_Branch        <= 1'b0;
-        DecodeExec_Jump           <= 1'b0;     DecodeExec_ALUSrc        <= 1'b0;
-        DecodeExec_MemToReg       <= 1'b0;     DecodeExec_ALUOpcode     <= `ALU_ADD;
-        DecodeExec_LinkDestReg    <= 1'b0;     DecodeExec_NEQBranch     <= 1'b0;
-        DecodeExec_JumpLink       <= 1'b0;     DecodeExec_HALT          <= 1'b0;
+    assign dmem_addr           = StageIV_ALUResult[7:0];  // effective address from ALU
+    assign dmem_wdata          = StageIV_srcReg2Data;     // forwarded store data
+    assign dmem_we             = StageIV_memWrite;
+ 
+    // ── MemoryFetch => WriteBack pipeline register always block ────────────────
+    always @(posedge clk) begin
+      if (!resetn) begin
+        StageV_destRegIndex    <= 3'd0;   StageV_ALUResult        <= 16'h0;
+        StageV_memDataFromDMEM <= 16'h0;  StageV_destRegWrite     <= 1'b0;
+        StageV_memToReg        <= 1'b0;   StageV_HALT             <= 1'b0;
+      end else if (halted) begin
+        // ── CPU halted: freeze all state ──────────────────────────────────────
       end else begin
-        DecodeExec_ProgramCounter <= FetchDecode_ProgramCounter;
-        DecodeExec_DestRegAddr    <= Decode_DestReg;
-        DecodeExec_SrcReg1        <= Decode_SrcReg1;
-        DecodeExec_SrcReg2        <= Decode_SrcReg2;
-        DecodeExec_SrcReg1_Data   <= Decode_SrcReg1_Data;
-        DecodeExec_SrcReg2_Data   <= Decode_SrcReg2_Data;
-        DecodeExec_Immediate      <= Decode_imm;
-        DecodeExec_DestRegWrite   <= CTRL_DestRegWrite;
-        DecodeExec_MemRead        <= CTRL_MemRead;
-        DecodeExec_MemWrite       <= CTRL_MemWrite;
-        DecodeExec_Branch         <= CTRL_Branch;
-        DecodeExec_Jump           <= CTRL_Jump;
-        DecodeExec_ALUSrc         <= CTRL_ALU_B;
-        DecodeExec_MemToReg       <= CTRL_MemToReg;
-        DecodeExec_ALUOpcode      <= CTRL_ALUOpcode;
-        DecodeExec_LinkDestReg    <= CTRL_LinkDestReg;
-        DecodeExec_NEQBranch      <= CTRL_BranchFlag;
-        DecodeExec_JumpLink       <= CTRL_JumpLink;
-        DecodeExec_HALT           <= CTRL_HALT;
+        StageV_destRegIndex    <= StageIV_destRegIndex;
+        StageV_ALUResult       <= StageIV_ALUResult;
+        StageV_memDataFromDMEM <= dmem_rdata;               // combinational read from dmem
+        StageV_destRegWrite    <= StageIV_destRegWrite;
+        StageV_memToReg        <= StageIV_memToReg;
+        StageV_HALT            <= StageIV_HALT;
       end
+    end
+  // =============================================================================
+  // ─── STAGE 4: MEMORY ACCESS (MEM) ────────────────────────────────────────────
+  // =============================================================================
+ 
+ 
+  // =============================================================================
+  // ─── STAGE 5: WRITE BACK (WB) ────────────────────────────────────────────────
+  // =============================================================================
+  // Select between ALU result and memory read data, then write to the register file.
+  // Also drives the StageV_write* wires used for write-before-read forwarding in ID.
+  // =============================================================================
+ 
+    // ── WB write signals — drive the forward-declared wires from Stage 2 ───────
+    assign StageV_writeEnable   = StageV_destRegWrite && (StageV_destRegIndex != 3'd0) && !halted;
+    assign StageV_writeRegIndex = StageV_destRegIndex;
+    assign StageV_writeData     = StageV_Result;         // StageV_Result declared in Stage 3
+ 
+    // ── Register file write + halted latch ─────────────────────────────────────
+    always @(posedge clk) begin
+      if (!resetn) begin
+        halted <= 1'b0;
+      end else if (halted) begin
+        // ── CPU halted: stay halted ────────────────────────────────────────────
+      end else begin
+        if (StageV_writeEnable)
+          regFile[StageV_writeRegIndex] <= StageV_writeData;
+        halted <= StageV_HALT;         // becomes 1 when HALT retires
+      end
+    end
+  // =============================================================================
+  // ─── STAGE 5: WRITE BACK (WB) ────────────────────────────────────────────────
+  // =============================================================================
 
-      // ══════════════════════════════════════════════════════════════════
-      // IF/ID update + PC advance
-      // ══════════════════════════════════════════════════════════════════
-      if (flush) begin
-        // Branch/jump taken: discard incorrectly-fetched instruction
-        FetchDecode_ProgramCounter <= programCounter;
-        FetchDecode_Instr          <= `NOP_INSTR;
-        // Redirect PC to branch target
-        programCounter             <= Exec_BranchTarget;
-      end else if (!stall) begin
-        // Normal advance
-        FetchDecode_ProgramCounter <= programCounter;
-        FetchDecode_Instr          <= imem_data;
-        programCounter             <= programCounter + 8'd1;
-      end
-      // stall (no flush): IF/ID and PC hold their values (no assignment)
-    end // else (not reset, not halted)
-  end
+
 endmodule
