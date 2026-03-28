@@ -22,7 +22,7 @@
 //
 //  B-type  [BEQ BNE]
 //   15:12  11:9  8:6   5:0
-//   opcode  rs1  rs2   imm6 (signed)    if cond: PC = (PC+1) + imm6
+//   opcode  rs2  rs1   imm6 (signed)    if cond: PC = (PC+1) + imm6
 //
 //  J-type  [JMP]
 //   15:12  11:9  8:0
