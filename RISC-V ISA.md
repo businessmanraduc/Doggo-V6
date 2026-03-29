@@ -1,9 +1,4 @@
-# RISC-V RV32I ISA — Complete Beginner's Reference
-
-> **How to use this document:**
-> Every section in the Table of Contents is a clickable link.
-> Every instruction in the index links directly to its full entry.
-> Use your Markdown viewer's back-navigation to return after following a link.
+# RISC-V RV32I ISA — Complete Reference
 
 ---
 
