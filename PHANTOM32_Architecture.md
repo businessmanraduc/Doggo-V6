@@ -241,8 +241,8 @@ guarantee.
 This means a 32-bit instruction can straddle a 32-bit memory boundary:
 
 ```
-Byte address:   0x00  0x02  0x04  0x06  0x08  0x0A
-                ─────────────────────────────────────
+Byte address:    0x00  | 0x02  | 0x04  | 0x06  | 0x08  | 0x0A
+                ─────────────────────────────────────────────
 Instruction:    [   32-bit A  ] [16b B] [   32-bit C  ]
                                               ↑
                            This instruction starts at 0x06, and its upper 16 bits
