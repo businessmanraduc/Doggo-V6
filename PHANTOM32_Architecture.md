@@ -65,40 +65,40 @@ the compressed instruction extension (RV32C) — and is designed to be extended 
 ## 2. Top-Level Block Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                            SoC (soc.v)                               │
-│                                                                       │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                        CPU Core (cpu.v)                       │   │
-│  │                                                               │   │
-│  │  ┌───────┐  ┌───────┐  ┌───────┐  ┌───────┐  ┌───────┐  ┌──────┐│
-│  │  │ PreIF │→ │  IF   │→ │  ID   │→ │  EX   │→ │  MA   │→ │  WB  ││
-│  │  │  (I)  │  │ (II)  │  │ (III) │  │ (IV)  │  │  (V)  │  │ (VI) ││
-│  │  └───────┘  └───────┘  └───────┘  └───────┘  └───────┘  └──────┘│
-│  │       │          │                    │            │          │   │
-│  │  imem_addr_a  imem_data_a          flush        dmem_addr  regfile│
-│  │  imem_addr_b  imem_data_b          TruePC       dmem_we    write  │
-│  │                                    TruePC_2     dmem_wdata        │
-│  │                                                 dmem_rdata        │
-│  └──────────────────────────────────────────────────────────────┘   │
-│         │         │                                    │              │
-│  ┌──────┴───────┐ │                           ┌────────┴──────┐      │
-│  │  IMEM (BRAM) │ │                           │  DMEM (BRAM)  │      │
-│  │  16-bit wide │ │                           │  32-bit wide  │      │
-│  │  Dual-port   │ │                           │  Byte enables │      │
-│  │  (Phase 1)   │ │                           │  (Phase 1)    │      │
-│  └──────────────┘ │                           └───────────────┘      │
-│                   │  (Phase 2 additions below this line)             │
-│            ┌──────┴───────┐                                          │
-│            │  I-Cache /   │                                          │
-│            │  D-Cache     │   ←─ replaces direct BRAM in Phase 2     │
-│            └──────┬───────┘                                          │
-│                   │                                                   │
-│            ┌──────┴───────┐                                          │
-│            │   SDRAM Ctrl │                                          │
-│            │  (64Mbit)    │                                          │
-│            └──────────────┘                                          │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                            SoC (soc.v)                                  │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                        CPU Core (cpu.v)                            │ │
+│  │                                                                    │ │
+│  │   ┌───────┐  ┌───────┐  ┌───────┐  ┌───────┐  ┌───────┐  ┌──────┐  │ │
+│  │   │ PreIF │→ │  IF   │→ │  ID   │→ │  EX   │→ │  MA   │→ │  WB  │  │ │
+│  │   │  (I)  │  │ (II)  │  │ (III) │  │ (IV)  │  │  (V)  │  │ (VI) │  │ │
+│  │   └───────┘  └───────┘  └───────┘  └───────┘  └───────┘  └──────┘  │ │
+│  │       │          │                     │          │          │     │ │
+│  │ imem_addr_a  imem_data_a           flush      dmem_addr   regfile  │ │
+│  │ imem_addr_b  imem_data_b           TruePC     dmem_we     write    │ │
+│  │                                    TruePC_2   dmem_wdata           │ │
+│  │                                               dmem_rdata           │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│         │         │                                    │                │
+│  ┌──────┴───────┐ │                           ┌────────┴──────┐         │
+│  │  IMEM (BRAM) │ │                           │  DMEM (BRAM)  │         │
+│  │  16-bit wide │ │                           │  32-bit wide  │         │
+│  │  Dual-port   │ │                           │  Byte enables │         │
+│  │  (Phase 1)   │ │                           │  (Phase 1)    │         │
+│  └──────────────┘ │                           └───────────────┘         │
+│                   │  (Phase 2 additions below this line)                │
+│            ┌──────┴───────┐                                             │
+│            │  I-Cache /   │                                             │
+│            │  D-Cache     │   ←─ replaces direct BRAM in Phase 2        │
+│            └──────┬───────┘                                             │
+│                   │                                                     │
+│            ┌──────┴───────┐                                             │
+│            │   SDRAM Ctrl │                                             │
+│            │  (64Mbit)    │                                             │
+│            └──────────────┘                                             │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -180,20 +180,20 @@ This leaves the vast majority of BRAM free for Phase 2 (I-cache, D-cache, BTB, P
 ### 4.1 Stage List
 
 ```
-┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
-│  Stage I │  │ Stage II │  │ Stage III│  │ Stage IV │  │  Stage V │  │ Stage VI │
-│          │  │          │  │          │  │          │  │          │  │          │
-│  PreIF   │─▶│    IF    │─▶│    ID    │─▶│    EX    │─▶│    MA    │─▶│    WB    │
-│          │  │          │  │          │  │          │  │          │  │          │
-│ Pre-Fetch│  │ Fetch    │  │ Decode   │  │ Execute  │  │ Memory   │  │ WriteBack│
-└──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘
-      │              │              │              │              │              │
-  Compute       Receive BRAM   Decode instr,   ALU, branch   Data memory   Write result
-  next PC,      data, form     read regfile,   resolution,   read/write,   to regfile,
-  drive BRAM    32-bit instr   gen immediate,  forwarding    load extend   handle HALT
-  addresses     window,        hazard detect,
-                detect         control signals
-                size (16/32)
+┌──────────┐  ┌──────────┐  ┌────────────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐
+│  Stage I │  │ Stage II │  │ Stage III  │  │ Stage IV  │  │  Stage V │  │ Stage VI │
+│          │  │          │  │            │  │           │  │          │  │          │
+│  PreIF   │─▶│    IF    │─▶│    ID      │─▶│    EX     │─▶│    MA    │─▶│    WB    │
+│          │  │          │  │            │  │           │  │          │  │          │
+│ Pre-Fetch│  │ Fetch    │  │ Decode     │  │ Execute   │  │ Memory   │  │ WriteBack│
+└──────────┘  └──────────┘  └────────────┘  └───────────┘  └──────────┘  └──────────┘
+     │              │             │               │             │             │
+  Compute     Receive BRAM   Decode instr,   ALU, branch   Data memory   Write result
+  next PC,    data, form     read regfile,   resolution,   read/write,   to regfile,
+  drive BRAM  32-bit instr   gen immediate,  forwarding    load extend   handle HALT
+  addresses   window,        hazard detect,
+              detect         control signals
+              size (16/32)
 ```
 
 ### 4.2 Pipeline Register Naming Convention
