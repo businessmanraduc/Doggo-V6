@@ -81,9 +81,10 @@ module regfile (
   //                   ID stage sees the up-to-date value without stalling
   //   3. Normal:      return the stored value from the LUT-RAM array
   // =============================================================================
-  assign rd_data_a = (rd_index_a == 5'd0)                 ? 32'h0   :
-                     (wr_en && (wr_index == rd_index_a))  ? wr_data :
-                     mem[rd_index_a];
+  assign rd_data_a =
+    (rd_index_a == 5'd0)                 ? 32'h0   :
+    (wr_en && (wr_index == rd_index_a))  ? wr_data :
+    mem[rd_index_a];
 
 
   // =============================================================================
@@ -93,9 +94,10 @@ module regfile (
   // Both ports can forward simultaneously if (unlikely) WB is writing a
   // register that happens to be both rs1 and rs2 of the same instruction.
   // =============================================================================
-  assign rd_data_b = (rd_index_b == 5'd0)                 ? 32'h0   :
-                     (wr_en && (wr_index == rd_index_b))  ? wr_data :
-                     mem[rd_index_b];
+  assign rd_data_b =
+    (rd_index_b == 5'd0)                 ? 32'h0   :
+    (wr_en && (wr_index == rd_index_b))  ? wr_data :
+    mem[rd_index_b];
 
 
 endmodule
