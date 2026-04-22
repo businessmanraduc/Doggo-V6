@@ -516,12 +516,12 @@ module cpu #(
 
     // ── Forwarded operand values ───────────────────────────────────────────────
     wire [31:0] forwardedSrcReg1 =
-      (forward_a == 2'b10) ? StageV_fwdValue   :
+      (forward_a == 2'b10) ? StageV_fwdValue    :
       (forward_a == 2'b01) ? StageVI_writeData  :
       StageIV_rs1_data;
 
     wire [31:0] forwardedSrcReg2 =
-      (forward_b == 2'b10) ? StageV_fwdValue   :
+      (forward_b == 2'b10) ? StageV_fwdValue    :
       (forward_b == 2'b01) ? StageVI_writeData  :
       StageIV_rs2_data;
 
@@ -529,7 +529,7 @@ module cpu #(
     // AUIPC: ALU port A receives PC (not rs1) so the adder computes PC + imm.
     // LUI:   ALU port A is irrelevant (ALU_PASS_B ignores A).
     // All other instructions: ALU port A = forwarded rs1.
-    wire [31:0] ALU_A = StageIV_isAUIPC ? StageIV_PC : forwardedSrcReg1;
+    wire [31:0] ALU_A = StageIV_isAUIPC ? StageIV_PC        : forwardedSrcReg1;
     wire [31:0] ALU_B = StageIV_ALUBSel ? StageIV_immediate : forwardedSrcReg2;
 
     // ── ALU ───────────────────────────────────────────────────────────────────
@@ -577,7 +577,7 @@ module cpu #(
     // Trap and MRET targets use the CSR direct outputs (combinational wires).
     wire [31:0] trapTarget = {csr_out_mtvec[31:2], 2'b00};  // direct mode
     wire [31:0] mretTarget = (StageV_isCSR && StageV_CSRAddr == `CSR_MEPC)
-                           ? StageV_CSR_wdata
+                           ? MA_csrNewData
                            : csr_out_mepc;
 
     // ── Load/store misalignment detection ─────────────────────────────────────
@@ -592,15 +592,15 @@ module cpu #(
         (StageIV_storeWidth == 2'b10 && aluResult[1:0] != 2'b00));      // SW
 
     // ── Trap detection in EX ──────────────────────────────────────────────────
-    wire EX_isTrap = StageIV_isECALL  || StageIV_isEBREAK ||
-                     StageIV_isIllegal|| loadMisalign      || storeMisalign;
+    wire EX_isTrap = StageIV_isECALL   || StageIV_isEBREAK || StageIV_isIllegal ||
+                     loadMisalign      || storeMisalign;
 
     wire [3:0] EX_trapCause =
-      StageIV_isECALL    ? `TRAP_ECALL_M        :
-      StageIV_isEBREAK   ? `TRAP_BREAKPOINT      :
-      loadMisalign        ? `TRAP_LOAD_MISALIGN   :
-      storeMisalign       ? `TRAP_STORE_MISALIGN  :
-      /* isIllegal */       `TRAP_ILLEGAL_INSTR   ;
+      StageIV_isECALL   ? `TRAP_ECALL_M         :
+      StageIV_isEBREAK  ? `TRAP_BREAKPOINT      :
+      loadMisalign      ? `TRAP_LOAD_MISALIGN   :
+      storeMisalign     ? `TRAP_STORE_MISALIGN  :
+      /* isIllegal */     `TRAP_ILLEGAL_INSTR   ;
 
     // trapVal: faulting address for misalignment; 0 for others (optional in spec)
     wire [31:0] EX_trapVal = (loadMisalign || storeMisalign) ? aluResult : 32'h0;
@@ -636,13 +636,13 @@ module cpu #(
     // ── Link address (return address for JAL/JALR family) ─────────────────────
     // PC+2 for compressed instructions (C.JAL, C.JALR), PC+4 for 32-bit.
     wire [31:0] EX_linkValue = StageIV_isCompressed ? (StageIV_PC + 32'd2)
-                                                     : (StageIV_PC + 32'd4);
+                                                    : (StageIV_PC + 32'd4);
 
     // ── CSR write data (finalised in EX after forwarding) ─────────────────────
     // For CSRRWI/CSRRSI/CSRRCI: write data = {27'b0, rs1_index} (zimm field).
     // For CSRRW/CSRRS/CSRRC: write data = forwarded rs1 value.
     wire [31:0] EX_csrWriteData = StageIV_CSRUseImm ? {27'b0, StageIV_rs1_index}
-                                                      : forwardedSrcReg1;
+                                                    : forwardedSrcReg1;
 
     // ── StageV_ latch (EX → MA) ──────────────────────────────────────────────
     always @(posedge clk) begin
@@ -744,9 +744,9 @@ module cpu #(
     // The DMEM delivers a 32-bit word.  We extract the correct byte or halfword
     // using addr[1:0], then extend based on the load width / signedness.
     wire [7:0] MA_loadByte =
-      StageV_ALUResult[1:0] == 2'b00 ? dmem_rdata[7:0]   :
-      StageV_ALUResult[1:0] == 2'b01 ? dmem_rdata[15:8]  :
-      StageV_ALUResult[1:0] == 2'b10 ? dmem_rdata[23:16] :
+      StageV_ALUResult[1:0] == 2'b00 ? dmem_rdata[7:0]    :
+      StageV_ALUResult[1:0] == 2'b01 ? dmem_rdata[15:8]   :
+      StageV_ALUResult[1:0] == 2'b10 ? dmem_rdata[23:16]  :
                                         dmem_rdata[31:24] ;
 
     wire [15:0] MA_loadHalf =
@@ -774,7 +774,7 @@ module cpu #(
       (StageV_CSROp == `CSR_OP_RW) ? StageV_CSR_wdata                        :
       (StageV_CSROp == `CSR_OP_RS) ? (csr_rd_data |  StageV_CSR_wdata)       :
       (StageV_CSROp == `CSR_OP_RC) ? (csr_rd_data & ~StageV_CSR_wdata)       :
-                                      StageV_CSR_wdata;
+                                     StageV_CSR_wdata;
 
     // Spec: CSRRS/CSRRC with wdata=0 must NOT write (to avoid side effects).
     // CSRRW always writes.
@@ -805,6 +805,8 @@ module cpu #(
     // somehow reaches MA without being caught in EX (should not occur in
     // Phase 1 with correct programs, but the mechanism is present).
     // For Phase 1: maFlush is never asserted; it remains as infrastructure.
+    wire        maFlush;
+    wire [31:0] maTruePC;
     assign maFlush = 1'b0;
     assign maTruePC = {csr_out_mtvec[31:2], 2'b00};
 

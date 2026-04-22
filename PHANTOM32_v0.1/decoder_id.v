@@ -207,8 +207,11 @@ module decoder_id (
         // ── BRANCH ───────────────────────────────────────────────────────────────
         // if (rs1 COND rs2): PC = PC + sext(imm13)
         `OP_BRANCH: begin
-          imm32         = immTypeB;     isBranch32     = 1'b1;  branchCond32 = func3;
-          if (func3 == 3'b010 || func3 == 3'b011) isIllegal32 = 1'b1;
+          if (func3 == 3'b010 || func3 == 3'b011) begin
+            isIllegal32 = 1'b1;
+          end else begin
+            imm32       = immTypeB;     isBranch32     = 1'b1;  branchCond32 = func3;
+          end
         end
 
         // ── LOAD ─────────────────────────────────────────────────────────────────
