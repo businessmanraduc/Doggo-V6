@@ -14,34 +14,34 @@
 // with Verilog comparison operators to keep the critical path short.
 // =============================================================================
 module alu (
-  input  wire [31:0] a,        // operand A  (rs1, post-forwarding)
-  input  wire [31:0] b,        // operand B  (rs2 or immediate, post-ALUBSel)
-  input  wire [3:0]  op,       // operation select
-  output reg  [31:0] result    // computed result
+  input  wire [31:0] lhs,     // operand A  (rs1 or ProgramCounter, post-forwarding)
+  input  wire [31:0] rhs,     // operand B  (rs2 or immediate, post-ALUBSel)
+  input  wire [3:0]  op,      // operation select
+  output reg  [31:0] result   // computed result
 );
 
   always @(*) begin
     case (op)
       // ── Arithmetic ─────────────────────────────────────────────────────────
-      `ALU_ADD:    result = a + b;                         // ADD, ADDI, AUIPC, loads, stores
-      `ALU_SUB:    result = a - b;                         // SUB
+      `ALU_ADD:    result = lhs + rhs;                         // ADD, ADDI, AUIPC, loads, stores
+      `ALU_SUB:    result = lhs - rhs;                         // SUB
 
       // ── Bitwise Logic ──────────────────────────────────────────────────────
-      `ALU_AND:    result = a & b;                         // AND, ANDI
-      `ALU_OR:     result = a | b;                         // OR, ORI
-      `ALU_XOR:    result = a ^ b;                         // XOR, XORI
+      `ALU_AND:    result = lhs & rhs;                         // AND, ANDI
+      `ALU_OR:     result = lhs | rhs;                         // OR, ORI
+      `ALU_XOR:    result = lhs ^ rhs;                         // XOR, XORI
 
       // ── Shifts ─────────────────────────────────────────────────────────────
-      `ALU_SLL:    result = a << b[4:0];                   // SLL, SLLI
-      `ALU_SRL:    result = a >> b[4:0];                   // SRL, SRLI  (logical: zero-fill)
-      `ALU_SRA:    result = $signed(a) >>> b[4:0];         // SRA, SRAI  (arithmetic: sign-fill)
+      `ALU_SLL:    result = lhs << rhs[4:0];                   // SLL, SLLI
+      `ALU_SRL:    result = lhs >> rhs[4:0];                   // SRL, SRLI  (logical: zero-fill)
+      `ALU_SRA:    result = $signed(lhs) >>> rhs[4:0];         // SRA, SRAI  (arithmetic: sign-fill)
 
       // ── Set-If-Less-Than ───────────────────────────────────────────────────
-      `ALU_SLT:    result = ($signed(a) < $signed(b)) ? 32'd1 : 32'd0;  // SLT, SLTI
-      `ALU_SLTU:   result = (a < b)                   ? 32'd1 : 32'd0;  // SLTU, SLTIU
+      `ALU_SLT:    result = ($signed(lhs) < $signed(rhs)) ? 32'd1 : 32'd0;  // SLT, SLTI
+      `ALU_SLTU:   result = (lhs < rhs)                   ? 32'd1 : 32'd0;  // SLTU, SLTIU
 
       // ── Pass-Through ───────────────────────────────────────────────────────
-      `ALU_PASS_B: result = b;                             // LUI (immediate already shifted)
+      `ALU_PASS_B: result = rhs;                             // LUI (immediate already shifted)
 
       // ── Safe Default ───────────────────────────────────────────────────────
       default:     result = 32'hDEADBEEF;                  // illegal opcode sentinel
