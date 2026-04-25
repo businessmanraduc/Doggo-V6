@@ -36,14 +36,14 @@ module regfile (
 );
 
   // ===========================================================================
-  // STORAGE ARRAY
+  // REGISTER STORAGE ARRAY
   // ===========================================================================
-  reg [31:0] mem [0:31];
+  reg [31:0] regFile [0:31];
 
   integer i;
   initial begin
     for (i = 0; i < 32; i = i + 1)
-      mem[i] = 32'h0;
+      regFile[i] = 32'h0;
   end
 
 
@@ -55,7 +55,7 @@ module regfile (
   // ===========================================================================
   always @(posedge clk) begin
     if (wr_en && (wr_index != 5'd0))
-      mem[wr_index] <= wr_data;
+      regFile[wr_index] <= wr_data;
   end
 
 
@@ -70,7 +70,7 @@ module regfile (
   assign rd_data_a =
     (rd_index_a == 5'd0)                ? 32'h0   :
     (wr_en && (wr_index == rd_index_a)) ? wr_data :
-    mem[rd_index_a];
+    regFile[rd_index_a];
 
 
   // ===========================================================================
@@ -79,6 +79,6 @@ module regfile (
   assign rd_data_b =
     (rd_index_b == 5'd0)                ? 32'h0   :
     (wr_en && (wr_index == rd_index_b)) ? wr_data :
-    mem[rd_index_b];
+    regFile[rd_index_b];
 
 endmodule
