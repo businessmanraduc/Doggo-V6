@@ -150,14 +150,14 @@ module csr_regfile (
   always @(*) begin
     case (rd_addr)
       // ── Read-Write CSRs (with forwarding) ──────────────────────────────────
-      `CSR_MSTATUS:   rd_data = (wr_en && wr_addr == `CSR_MSTATUS)  ? wr_data : r_mstatus;
-      `CSR_MIE:       rd_data = (wr_en && wr_addr == `CSR_MIE)      ? wr_data : r_mie;
-      `CSR_MTVEC:     rd_data = (wr_en && wr_addr == `CSR_MTVEC)    ? wr_data : r_mtvec;
-      `CSR_MSCRATCH:  rd_data = (wr_en && wr_addr == `CSR_MSCRATCH) ? wr_data : r_mscratch;
-      `CSR_MEPC:      rd_data = (wr_en && wr_addr == `CSR_MEPC)     ? wr_data : r_mepc;
-      `CSR_MCAUSE:    rd_data = (wr_en && wr_addr == `CSR_MCAUSE)   ? wr_data : r_mcause;
-      `CSR_MTVAL:     rd_data = (wr_en && wr_addr == `CSR_MTVAL)    ? wr_data : r_mtval;
-      `CSR_MIP:       rd_data = (wr_en && wr_addr == `CSR_MIP)      ? wr_data : r_mip;
+      `CSR_MSTATUS:   rd_data = (wr_en && wr_addr == `CSR_MSTATUS)  ? (wr_data & MSTATUS_MASK)  : r_mstatus;
+      `CSR_MIE:       rd_data = (wr_en && wr_addr == `CSR_MIE)      ? (wr_data & MIE_MASK)      : r_mie;
+      `CSR_MTVEC:     rd_data = (wr_en && wr_addr == `CSR_MTVEC)    ? (wr_data & MTVEC_MASK)    : r_mtvec;
+      `CSR_MSCRATCH:  rd_data = (wr_en && wr_addr == `CSR_MSCRATCH) ? (wr_data & MSCRATCH_MASK) : r_mscratch;
+      `CSR_MEPC:      rd_data = (wr_en && wr_addr == `CSR_MEPC)     ? (wr_data & MEPC_MASK)     : r_mepc;
+      `CSR_MCAUSE:    rd_data = (wr_en && wr_addr == `CSR_MCAUSE)   ? (wr_data & MCAUSE_MASK)   : r_mcause;
+      `CSR_MTVAL:     rd_data = (wr_en && wr_addr == `CSR_MTVAL)    ? (wr_data & MTVAL_MASK)    : r_mtval;
+      `CSR_MIP:       rd_data = (wr_en && wr_addr == `CSR_MIP)      ? (wr_data & MIP_MASK)      : r_mip;
 
       // ── Read-Only CSRs (no forwarding needed) ───────────────────────────────
       `CSR_MISA:      rd_data = `CSR_VAL_MISA;
