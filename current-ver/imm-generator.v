@@ -1,5 +1,21 @@
 `include "isa.vh"
 
+// =============================================================================
+// PHANTOM-32  ──  Immediate Generator
+// =============================================================================
+// Extracts and sign-extends immediate values from both 32-bit (RV32I) and
+// 16-bit compressed (RV32C) instructions. Supports all immediate formats:
+//
+// RV32I formats:  I, S, B, U, J, shift-amount
+// RV32C formats:  CI, CIW, CL, CS, CB, CJ, CSS (all quadrants)
+//
+// Outputs:
+//   immediate   - The extracted immediate value (sign-extended where applicable)
+//   immediate_2 - immediate + 2 (used for dual-PC branch target calculation)
+//
+// Pure combinational - no state, no clock. Decode paths run in parallel;
+// output mux selects based on is_compressed flag.
+// =============================================================================
 module imm_generator (
   input  wire [31:0] instrWord,
   input  wire        is_compressed,
