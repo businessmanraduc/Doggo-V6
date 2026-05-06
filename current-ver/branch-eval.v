@@ -1,7 +1,7 @@
 `include "isa.vh"
 
 // =============================================================================
-// PHANTOM-32  ──  Branch Evaluator
+// PHANTOM-32  ──  Branch Taken Evaluator
 // =============================================================================
 // Pure combinational comparison unit for branch condition evaluation.
 // Used in EX stage to determine if a branch should be taken.
