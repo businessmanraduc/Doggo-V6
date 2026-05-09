@@ -13,7 +13,7 @@
 //
 // ── Forwarding priority ──────────────────────────────────────────────────────
 //   MA result  >  WB result  >  regfile output
-//   (most recent wins — MA is fresher than WB)
+//   (most recent wins - MA is fresher than WB)
 //
 // ── fwd_*_sel encoding ───────────────────────────────────────────────────────
 //   2'b00 → use regfile output    (no hazard, or hazard covered by regfile)
@@ -42,7 +42,7 @@ module forward_unit (
   // FORWARDING SELECT  ──  operand forwarding (rs1 & rs2)
   // ===========================================================================
   // The x0 guard (rd_index != 0) prevents forwarding when the producing
-  // instruction discards its result — writes to x0 are always silent.
+  // instruction discards its result - writes to x0 are always silent.
   // MA takes priority over WB because it holds the more recent result.
   // ===========================================================================
     wire fwd_rs1_ma  = (ma_reg_write)
