@@ -27,10 +27,11 @@ module fast_decoder (
   // =============================================================================
   // 32-BIT FIELD EXTRACTION
   // =============================================================================
-  wire [6:0] op32    = instrWord[6:0];
-  wire [4:0] rs1_32  = instrWord[19:15];
-  wire [4:0] rs2_32  = instrWord[24:20];
-  wire [4:0] rd_32   = instrWord[11:7];
+  wire [6:0] op32      = instrWord[6:0];
+  wire [4:0] rs1_32    = instrWord[19:15];
+  wire [4:0] rs2_32    = instrWord[24:20];
+  wire [4:0] rd_32     = instrWord[11:7];
+  wire [4:0] rs1_Sys32 = instrWord[14] ? 5'd0 : rs1_32;
 
   // =============================================================================
   // 16-BIT FIELD EXTRACTION
@@ -158,20 +159,18 @@ module fast_decoder (
         // =========================================================================
         default: begin
           case (op32)
-            `OP_ARITH_R: begin rs1_index = rs1_32;               rs2_index = rs2_32; rd_index = rd_32; end  // R
-            `OP_ARITH_I: begin rs1_index = rs1_32;               rs2_index = 5'd0;   rd_index = rd_32; end  // I (imm at [24:20])
-            `OP_LOAD:    begin rs1_index = rs1_32;               rs2_index = 5'd0;   rd_index = rd_32; end  // I (imm at [24:20])
-            `OP_JALR:    begin rs1_index = rs1_32;               rs2_index = 5'd0;   rd_index = rd_32; end  // I (imm at [24:20])
-            `OP_STORE:   begin rs1_index = rs1_32;               rs2_index = rs2_32; rd_index = 5'd0;  end  // S (imm at [11:7])
-            `OP_BRANCH:  begin rs1_index = rs1_32;               rs2_index = rs2_32; rd_index = 5'd0;  end  // B (imm at [11:7])
-            `OP_JAL:     begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = rd_32; end  // J (imm at [19:12]+[20]+[30:21]+[31])
-            `OP_LUI:     begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = rd_32; end  // U (imm at [31:12])
-            `OP_AUIPC:   begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = rd_32; end  // U (imm at [31:12])
-            `OP_SYSTEM:  begin rs1_index = instrWord[14] ? 5'd0  // CSRRxI: zimm at [19:15], not rs1
-                                                         : rs1_32;
-                               rs2_index = 5'd0;   rd_index = rd_32; end
-            `OP_FENCE:   begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = 5'd0;  end  // NOP
-            default:     begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = 5'd0;  end  // illegal
+            `OP_ARITH_R: begin rs1_index = rs1_32;               rs2_index = rs2_32; rd_index = rd_32; end
+            `OP_ARITH_I: begin rs1_index = rs1_32;               rs2_index = 5'd0;   rd_index = rd_32; end
+            `OP_LOAD:    begin rs1_index = rs1_32;               rs2_index = 5'd0;   rd_index = rd_32; end
+            `OP_JALR:    begin rs1_index = rs1_32;               rs2_index = 5'd0;   rd_index = rd_32; end
+            `OP_STORE:   begin rs1_index = rs1_32;               rs2_index = rs2_32; rd_index = 5'd0;  end
+            `OP_BRANCH:  begin rs1_index = rs1_32;               rs2_index = rs2_32; rd_index = 5'd0;  end
+            `OP_JAL:     begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = rd_32; end
+            `OP_LUI:     begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = rd_32; end
+            `OP_AUIPC:   begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = rd_32; end
+            `OP_SYSTEM:  begin rs1_index = rs1_Sys32;            rs2_index = 5'd0;   rd_index = rd_32; end
+            `OP_FENCE:   begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = 5'd0;  end
+            default:     begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = 5'd0;  end
           endcase
         end
       endcase

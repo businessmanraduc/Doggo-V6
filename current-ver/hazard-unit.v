@@ -20,7 +20,7 @@ module hazard_unit (
   input  wire        id_is_load,     // 1 = ID instruction is a load
 
   // ── Stall output ──────────────────────────────────────────────────────────
-  output wire        stall           // 1 = write NOP to IF/ID (StageIII_), freeze PC + StageII_
+  output wire        stall           // 1 = write NOP to IF/ID, freeze PC + IF
 );
 
   assign stall  = ((id_is_load)
