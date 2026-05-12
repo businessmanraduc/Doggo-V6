@@ -53,21 +53,32 @@ module fast_decoder (
 
 
   // =============================================================================
-  // REGISTER INDEX MUX  ──  32-bit path
+  // REGISTER INDEX MUX
   // =============================================================================
-  // Straightforward: all register fields live at fixed positions.
-  // =============================================================================
-
-  // =============================================================================
-  // REGISTER INDEX MUX  ──  16-bit path
-  // =============================================================================
-  // Decoded per-quadrant, per-funct3.  Each case identifies which register
-  // fields are READ (→ rs1/rs2) and which is WRITTEN (→ rd).
-  // x0 is used as a safe "no register" sentinel — writes to x0 are discarded
-  // by the regfile and x0 reads never cause hazards.
+  // Both decode paths live in one always block, selected by instrWord[1:0]:
+  //   CQ0/CQ1/CQ2 (2'b00/01/10) → 16-bit compressed path, decoded per cfunc3
+  //   default     (2'b11)        → 32-bit path, decoded per opcode
+  //
+  // Fields that do not hold a register index for a given instruction type are
+  // driven to 5'd0 (x0).  This is critical: if immediate bits are allowed to
+  // propagate as fake register indices, the hazard unit may stall the pipeline
+  // on a load-use that does not actually exist, wasting cycles silently.
+  //
+  // 32-bit format summary (which positions hold real register indices):
+  //   R-type  (ARITH_R):           rs1=[19:15]  rs2=[24:20]  rd=[11:7]
+  //   I-type  (ARITH_I/LOAD/JALR): rs1=[19:15]  [24:20]=imm  rd=[11:7]
+  //   S-type  (STORE):             rs1=[19:15]  rs2=[24:20]  [11:7]=imm
+  //   B-type  (BRANCH):            rs1=[19:15]  rs2=[24:20]  [11:7]=imm
+  //   U-type  (LUI/AUIPC):         [19:15]=imm  [24:20]=imm  rd=[11:7]
+  //   J-type  (JAL):               [19:15]=imm  [24:20]=imm  rd=[11:7]
+  //   SYSTEM  (CSRRx):             rs1=[19:15]  [24:20]=imm  rd=[11:7]
+  //   SYSTEM  (CSRRxI, func3[2]=1):[19:15]=zimm [24:20]=imm  rd=[11:7]
   // =============================================================================
     always @(*) begin
       case (quad)
+        // =========================================================================
+        // QUADRANT 0
+        // =========================================================================
         `CQ0: begin
           case (cfunc3)
             `CF3_C_ADDI4SPN: begin rs1_index = 5'd2;      rs2_index = 5'd0;      rd_index = rs2_prime; end
@@ -77,6 +88,9 @@ module fast_decoder (
           endcase
         end
 
+        // =========================================================================
+        // QUADRANT 1
+        // =========================================================================
         `CQ1: begin
           case (cfunc3)
             `CF3_C_ADDI:     begin rs1_index = rs1_full;  rs2_index = 5'd0;      rd_index = rs1_full;  end
@@ -103,11 +117,14 @@ module fast_decoder (
           endcase
         end
 
+        // =========================================================================
+        // QUADRANT 2
+        // =========================================================================
         `CQ2: begin
           case (cfunc3)
             `CF3_C_SLLI:     begin rs1_index = rs1_full;  rs2_index = 5'd0;      rd_index = rs1_full;  end
             `CF3_C_LWSP:     begin rs1_index = 5'd2;      rs2_index = 5'd0;      rd_index = rs1_full;  end
-            `CF3_C_MISC:     begin 
+            `CF3_C_MISC:     begin
               if (instrWord[12] == 1'b0) begin
                 if (instrWord[6:2] == 5'd0) begin                            // C.JR
                   rs1_index = rs1_full; rs2_index = 5'd0;     rd_index = 5'd0;
@@ -129,11 +146,38 @@ module fast_decoder (
           endcase
         end
 
-        default:             begin rs1_index = rs1_32;    rs2_index = rs2_32;    rd_index = rd_32;     end
+        // =========================================================================
+        // 32-BIT PATH  (instrWord[1:0] = 2'b11)
+        // =========================================================================
+        // Disambiguate by opcode so that immediate bits are never mistaken for
+        // register indices.  Every operand field that does not contain a real
+        // register index for a given format is driven to 5'd0.
+        //
+        // OP_SYSTEM extra case: func3[2] (instrWord[14]) = 1 for CSRRxI variants
+        // (CSRRWI/CSRRSI/CSRRCI), which use instrWord[19:15] as zimm, not rs1.
+        // =========================================================================
+        default: begin
+          case (op32)
+            `OP_ARITH_R: begin rs1_index = rs1_32;               rs2_index = rs2_32; rd_index = rd_32; end  // R
+            `OP_ARITH_I: begin rs1_index = rs1_32;               rs2_index = 5'd0;   rd_index = rd_32; end  // I (imm at [24:20])
+            `OP_LOAD:    begin rs1_index = rs1_32;               rs2_index = 5'd0;   rd_index = rd_32; end  // I (imm at [24:20])
+            `OP_JALR:    begin rs1_index = rs1_32;               rs2_index = 5'd0;   rd_index = rd_32; end  // I (imm at [24:20])
+            `OP_STORE:   begin rs1_index = rs1_32;               rs2_index = rs2_32; rd_index = 5'd0;  end  // S (imm at [11:7])
+            `OP_BRANCH:  begin rs1_index = rs1_32;               rs2_index = rs2_32; rd_index = 5'd0;  end  // B (imm at [11:7])
+            `OP_JAL:     begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = rd_32; end  // J (imm at [19:12]+[20]+[30:21]+[31])
+            `OP_LUI:     begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = rd_32; end  // U (imm at [31:12])
+            `OP_AUIPC:   begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = rd_32; end  // U (imm at [31:12])
+            `OP_SYSTEM:  begin rs1_index = instrWord[14] ? 5'd0  // CSRRxI: zimm at [19:15], not rs1
+                                                         : rs1_32;
+                               rs2_index = 5'd0;   rd_index = rd_32; end
+            `OP_FENCE:   begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = 5'd0;  end  // NOP
+            default:     begin rs1_index = 5'd0;                 rs2_index = 5'd0;   rd_index = 5'd0;  end  // illegal
+          endcase
+        end
       endcase
     end
   // =============================================================================
-  // REGISTER INDEX MUX  ──  16-bit path
+  // REGISTER INDEX MUX
   // =============================================================================
 
 endmodule

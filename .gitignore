@@ -1,3 +1,5 @@
 *.vcd
 *.hex
 sim_icarus
+current-ver/tb/
+

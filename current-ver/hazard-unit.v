@@ -9,10 +9,6 @@
 //   1. The instruction in ID is a load (result not available until end of MA)
 //   2. The instruction in IF reads the same register the load writes to
 //
-// When stall=1, the pipeline control must:
-//   • Freeze the IF/ID pipeline register (hold current IF instruction)
-//   • Freeze the PC register             (don't advance to next instruction)
-//   • Insert a NOP bubble into ID/EX     (squash the instruction entering EX)
 // =============================================================================
 module hazard_unit (
   // ── From IF stage (fast_decoder, before IF/ID pipeline register) ──────────
@@ -24,7 +20,7 @@ module hazard_unit (
   input  wire        id_is_load,     // 1 = ID instruction is a load
 
   // ── Stall output ──────────────────────────────────────────────────────────
-  output wire        stall           // 1 = freeze IF/ID + PC, NOP -> ID/EX
+  output wire        stall           // 1 = write NOP to IF/ID (StageIII_), freeze PC + StageII_
 );
 
   assign stall  = ((id_is_load)
