@@ -35,7 +35,7 @@
 //   the new value to the next CSR instruction reading the same address.
 //
 // ── IMEM interface ───────────────────────────────────────────────────────────
-//   16-bit wide, asynchronous (combinational) read, dual port.
+//   16-bit wide, synchronous (1-cycle latency) read, dual port.
 //   Simultaneously reads at PC (addr_a) and PC+2 (addr_b) each cycle.
 //   If imem_data_a[1:0] = 2'b11 the instruction is 32-bit and both halves
 //   are concatenated; otherwise only imem_data_a is used (16-bit compressed).
@@ -66,9 +66,6 @@ module cpu (
     // ── PreIF/IF ─────────────────────────────────────────────────────────────
     reg [31:0] r_pc;              // Main ProgramCounter register
     reg [31:0] r_pc2;             // Main ProgramCounter register (+2)
-    reg [31:0] nextPC;            // NextPC     value from NextPC MUX
-    reg [31:0] nextPC2;           // NextPC + 2 value from NextPC MUX
-
 
     // ── IF/ID ────────────────────────────────────────────────────────────────
     reg [31:0] if_id_instr;       // assembled instruction word
@@ -151,17 +148,19 @@ module cpu (
   // ===========================================================================
 
     // ── Control / Hazard / Flush ─────────────────────────────────────────────
-    wire        stall;            // Stall Fetch flag
-    wire        branch_flush;     // Branch Flush (misprediction) flag
-    wire        trap_en;          // Trap Enable flag
-    wire        mret_en;          // MRET flag
+    wire         stall;           // Stall Fetch flag
+    wire         branch_flush;    // Branch Flush (misprediction) flag
+    wire         trap_en;         // Trap Enable flag
+    wire         mret_en;         // MRET flag
+    logic [31:0] nextPC;          // NextPC     value from NextPC MUX
+    logic [31:0] nextPC2;         // NextPC + 2 value from NextPC MUX
 
     // ── IMEM / IF instruction assembly ───────────────────────────────────────
     wire        if_isCompressed;  // Compressed instruction flag
     wire [31:0] if_instr;         // Fetched instruction (from IMEM)
 
     // ── fast_decoder outputs ─────────────────────────────────────────────────
-    wire        fd_isCompressed;  // Compressed instruction flag
+    wire        fd_isCompressed;  // Compressed instruction flag (OBSOLETE)
     wire [4:0]  fd_rs1Index;      // extracted rs1 index
     wire [4:0]  fd_rs2Index;      // extracted rs2 index
     wire [4:0]  fd_rdIndex;       // extracted rd  index
