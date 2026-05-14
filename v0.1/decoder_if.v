@@ -4,7 +4,7 @@
 // =============================================================================
 // Lightweight parallel decoder that runs in the IF stage.
 //
-// Purpose — hazard detection and register file pre-addressing only.
+// Purpose - hazard detection and register file pre-addressing only.
 // The full control signal decode happens in ParallelDecoderID (ID stage).
 // This module exists for one reason: the load-use hazard detector in the ID
 // stage needs to know the rs1 and rs2 indices of the instruction currently
@@ -12,20 +12,20 @@
 // come from here, registered through the IF/ID (StageIII_) pipeline register.
 //
 // Outputs produced:
-//   is_compressed   — selects 16-bit vs 32-bit instruction path downstream
-//   rd_index        — destination register (for forwarding / WB tracking)
-//   rs1_index       — source register 1   (for load-use stall check in ID)
-//   rs2_index       — source register 2   (for load-use stall check in ID)
-//   is_load         — 1 when this instruction is a load (LW / C.LW / C.LWSP)
+//   is_compressed   - selects 16-bit vs 32-bit instruction path downstream
+//   rd_index        - destination register (for forwarding / WB tracking)
+//   rs1_index       - source register 1   (for load-use stall check in ID)
+//   rs2_index       - source register 2   (for load-use stall check in ID)
+//   is_load         - 1 when this instruction is a load (LW / C.LW / C.LWSP)
 //
 // Inputs:
-//   instr_lo [15:0] — halfword at PC   (Port A BRAM data  = imem_data_a)
-//   instr_hi [15:0] — halfword at PC+2 (Port B BRAM data  = imem_data_b)
+//   instr_lo [15:0] - halfword at PC   (Port A BRAM data  = imem_data_a)
+//   instr_hi [15:0] - halfword at PC+2 (Port B BRAM data  = imem_data_b)
 //
 // Two paths run in parallel, selected at the output by is_compressed:
-//   32-bit path — straightforward: register fields are always at fixed
+//   32-bit path - straightforward: register fields are always at fixed
 //     positions in RV32I (rs1=[19:15], rs2=[24:20], rd=[11:7]).
-//   16-bit path — more involved: compressed formats scatter register fields
+//   16-bit path - more involved: compressed formats scatter register fields
 //     and use a 3-bit "restricted register" encoding for some operands that
 //     maps to x8–x15 (actual index = {2'b01, field[2:0]}).  Each quadrant
 //     and funct3 combination is handled explicitly.
@@ -48,7 +48,7 @@ module decoder_if (
   // =============================================================================
   // Any 32-bit RV32I instruction has bits [1:0] = 2'b11.
   // Any 16-bit RV32C instruction has bits [1:0] != 2'b11  (00, 01, or 10).
-  // We test instr_lo because that is always the halfword at PC — the first
+  // We test instr_lo because that is always the halfword at PC - the first
   // halfword of whatever instruction starts here.
   // =============================================================================
   assign is_compressed = (instr_lo[1:0] != 2'b11);
@@ -160,11 +160,11 @@ module decoder_if (
           case (compressedFunct3)
             // C.ADDI4SPN: rd' = instr[4:2], implicit rs1 = x2 (sp)
             `CF3_C_ADDI4SPN: begin destRegC = compressedDestRegRes; srcReg1C = 5'd2;                    end
-            // C.LW: rd' = instr[4:2], rs1' = instr[9:7] — IS A LOAD
+            // C.LW: rd' = instr[4:2], rs1' = instr[9:7] - IS A LOAD
             `CF3_C_LW:       begin destRegC = compressedDestRegRes; srcReg1C = compressedSrcReg1Res; isLoadC = 1'b1;  end
-            // C.SW: rs2' = instr[4:2], rs1' = instr[9:7] — store, no rd
+            // C.SW: rs2' = instr[4:2], rs1' = instr[9:7] - store, no rd
             `CF3_C_SW:       begin srcReg1C = compressedSrcReg1Res; srcReg2C = compressedSrcReg2Res;    end
-            // All other Q0 encodings are reserved in RV32C — treat as NOP
+            // All other Q0 encodings are reserved in RV32C - treat as NOP
             default: begin end
           endcase
         end
@@ -217,9 +217,9 @@ module decoder_if (
           case (compressedFunct3)
             // C.SLLI: rd/rs1 = instr[11:7]
             `CF3_C_SLLI: begin destRegC = compressedDestRegFull;  srcReg1C = compressedDestRegFull; end
-            // C.LWSP: rd = instr[11:7], implicit rs1 = x2 (sp) — IS A LOAD
+            // C.LWSP: rd = instr[11:7], implicit rs1 = x2 (sp) - IS A LOAD
             `CF3_C_LWSP: begin destRegC = compressedDestRegFull;  srcReg1C = 5'd2; isLoadC = 1'b1;  end
-            // C.SWSP: rs2 = instr[6:2], implicit rs1 = x2 (sp) — store, no rd
+            // C.SWSP: rs2 = instr[6:2], implicit rs1 = x2 (sp) - store, no rd
             `CF3_C_SWSP: begin srcReg1C = 5'd2;                   srcReg2C = compressedSrcReg2Full; end
             // C.MISC: C.JR / C.MV / C.EBREAK / C.JALR / C.ADD
             // All share funct3=100; distinguished by instr[12] and instr[6:2].

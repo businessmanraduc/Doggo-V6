@@ -17,8 +17,8 @@
 //
 // ── fwd_*_sel encoding ───────────────────────────────────────────────────────
 //   2'b00 → use regfile output    (no hazard, or hazard covered by regfile)
-//   2'b10 → use EX/MA result      (forward from MA stage — 1 cycle old)
-//   2'b01 → use MA/WB result      (forward from WB stage — 2 cycles old)
+//   2'b10 → use EX/MA result      (forward from MA stage - 1 cycle old)
+//   2'b01 → use MA/WB result      (forward from WB stage - 2 cycles old)
 // =============================================================================
 module forward_unit (
   // ── Source indices of the instruction currently in EX ─────────────────────

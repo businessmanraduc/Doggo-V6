@@ -94,7 +94,7 @@ module tb_icarus;
         // R4 = 0 (memory base address)
         check16(dut.u_cpu.regFile[4], 16'd0,  "R4 = 0 (membase)");
 
-        // R5 = 15 (loaded back from dmem[0] — tests SW + LW round-trip)
+        // R5 = 15 (loaded back from dmem[0] - tests SW + LW round-trip)
         check16(dut.u_cpu.regFile[5], 16'd15, "R5 = 15 (load)");
 
         // dmem[0] = 15 (stored by SW)

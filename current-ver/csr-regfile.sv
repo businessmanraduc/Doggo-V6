@@ -1,7 +1,7 @@
 `include "isa.vh"
-// =============================================================================
+// ===============================================================================
 // PHANTOM-32  ──  M-Mode CSR Register File
-// =============================================================================
+// ===============================================================================
 // Implements mandatory Machine-mode Control and Status Registers for an
 // M-mode-only core.
 //
@@ -24,29 +24,30 @@
 //   mret_en → mstatus.MIE←MPIE, MPIE←1
 //
 // Reserved bits masked via WARL (Write Any, Read Legal) masks.
-// =============================================================================
+// ===============================================================================
 module csr_regfile (
   input  wire        clk,
   input  wire        resetn,         // active-low synchronous reset
 
-  // ── Normal CSR read/write (from MA stage) ────────────────────────────────
+  // ── Normal CSR read/write (from MA stage) ────────────────────────────────────
   input  wire [11:0] rd_addr,        // CSR address to read
-  output reg  [31:0] rd_data,        // value at rd_addr (combinational)
+  output reg  [31:0] rd_data,        // value at rd_addr (combinational, WBR forwarding)
+  output reg  [31:0] rd_data_raw,    // value at rd_addr (raw,        NO WBR forwarding)
 
   input  wire [11:0] wr_addr,        // CSR address to write
   input  wire [31:0] wr_data,        // new value (after RMW by MA stage)
   input  wire        wr_en,          // write enable
 
-  // ── Trap entry (from MA stage when trap occurs) ──────────────────────────
+  // ── Trap entry (from MA stage when trap occurs) ──────────────────────────────
   input  wire        trap_en,        // 1 = latch trap state this cycle
   input  wire [31:0] trap_mepc,      // PC of trapping instruction → mepc
   input  wire [31:0] trap_mcause,    // exception code → mcause
   input  wire [31:0] trap_mtval,     // faulting address or instruction → mtval
 
-  // ── MRET (from MA stage) ─────────────────────────────────────────────────
+  // ── MRET (from MA stage) ─────────────────────────────────────────────────────
   input  wire        mret_en,        // 1 = restore mstatus from saved fields
 
-  // ── Direct outputs (wired from flip-flops, bypassing rd_data mux) ────────
+  // ── Direct outputs (wired from flip-flops, bypassing rd_data mux) ────────────
   output wire [31:0] out_mstatus,    // full mstatus word (pipeline checks MIE)
   output wire [31:0] out_mtvec,      // trap vector base + mode
   output wire [31:0] out_mepc        // saved exception PC (for MRET target)
@@ -109,7 +110,7 @@ module csr_regfile (
       r_mip      <= 32'h0;
 
     end else if (trap_en) begin
-      // ── Trap entry ─────────────────────────────────────────────────────────
+      // ── Trap entry ───────────────────────────────────────────────────────────
       r_mepc    <= trap_mepc   & MEPC_MASK;
       r_mcause  <= trap_mcause & MCAUSE_MASK;
       r_mtval   <= trap_mtval  & MTVAL_MASK;
@@ -118,13 +119,13 @@ module csr_regfile (
                  | 32'h0000_1800;                   // MPP=11, MIE=0
 
     end else if (mret_en) begin
-      // ── MRET ──────────────────────────────────────────────────────────────
+      // ── MRET ─────────────────────────────────────────────────────────────────
       r_mstatus <= (r_mstatus & ~MSTATUS_MASK)      // clear writable bits
                  | ((r_mstatus & 32'h80) >> 4)      // MIE ← MPIE (bit7→bit3)
                  | 32'h0000_1880;                   // MPP=11, MPIE=1
 
     end else if (wr_en) begin
-      // ── Normal CSR write ───────────────────────────────────────────────────
+      // ── Normal CSR write ─────────────────────────────────────────────────────
       case (wr_addr)
         `CSR_MSTATUS:  r_mstatus  <= wr_data & MSTATUS_MASK;
         `CSR_MIE:      r_mie      <= wr_data & MIE_MASK;
@@ -149,7 +150,7 @@ module csr_regfile (
   // =============================================================================
   always @(*) begin
     case (rd_addr)
-      // ── Read-Write CSRs (with forwarding) ──────────────────────────────────
+      // ── Read-Write CSRs (with forwarding) ────────────────────────────────────
       `CSR_MSTATUS:   rd_data = (wr_en && wr_addr == `CSR_MSTATUS)  ? (wr_data & MSTATUS_MASK)  : r_mstatus;
       `CSR_MIE:       rd_data = (wr_en && wr_addr == `CSR_MIE)      ? (wr_data & MIE_MASK)      : r_mie;
       `CSR_MTVEC:     rd_data = (wr_en && wr_addr == `CSR_MTVEC)    ? (wr_data & MTVEC_MASK)    : r_mtvec;
@@ -159,7 +160,7 @@ module csr_regfile (
       `CSR_MTVAL:     rd_data = (wr_en && wr_addr == `CSR_MTVAL)    ? (wr_data & MTVAL_MASK)    : r_mtval;
       `CSR_MIP:       rd_data = (wr_en && wr_addr == `CSR_MIP)      ? (wr_data & MIP_MASK)      : r_mip;
 
-      // ── Read-Only CSRs (no forwarding needed) ───────────────────────────────
+      // ── Read-Only CSRs (no forwarding needed) ────────────────────────────────
       `CSR_MISA:      rd_data = `CSR_VAL_MISA;
       `CSR_MVENDORID: rd_data = `CSR_VAL_MVENDORID;
       `CSR_MARCHID:   rd_data = `CSR_VAL_MARCHID;
@@ -167,6 +168,34 @@ module csr_regfile (
       `CSR_MHARTID:   rd_data = `CSR_VAL_MHARTID;
 
       default:        rd_data = 32'h0;
+    endcase
+  end
+
+
+  // ===========================================================================
+  // RAW READ  (no write-before-read forwarding)
+  // ===========================================================================
+  // Returns the current flip-flop value directly.  Used by MA stage to capture
+  // the OLD CSR value before issuing a RMW write.  The forwarding path in
+  // rd_data would otherwise return the new (post-write) value, corrupting the
+  // rd writeback of CSRRW / CSRRS / CSRRC.
+  // ===========================================================================
+  always @(*) begin
+    case (rd_addr)
+      `CSR_MSTATUS:   rd_data_raw = r_mstatus;
+      `CSR_MIE:       rd_data_raw = r_mie;
+      `CSR_MTVEC:     rd_data_raw = r_mtvec;
+      `CSR_MSCRATCH:  rd_data_raw = r_mscratch;
+      `CSR_MEPC:      rd_data_raw = r_mepc;
+      `CSR_MCAUSE:    rd_data_raw = r_mcause;
+      `CSR_MTVAL:     rd_data_raw = r_mtval;
+      `CSR_MIP:       rd_data_raw = r_mip;
+      `CSR_MISA:      rd_data_raw = `CSR_VAL_MISA;
+      `CSR_MVENDORID: rd_data_raw = `CSR_VAL_MVENDORID;
+      `CSR_MARCHID:   rd_data_raw = `CSR_VAL_MARCHID;
+      `CSR_MIMPID:    rd_data_raw = `CSR_VAL_MIMPID;
+      `CSR_MHARTID:   rd_data_raw = `CSR_VAL_MHARTID;
+      default:        rd_data_raw = 32'h0;
     endcase
   end
 

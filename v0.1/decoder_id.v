@@ -15,9 +15,9 @@
 // (see: RVCoreP-32IC paper, section III-B)
 //
 // Outputs:
-//   immediate    — 32-bit sign/zero-extended immediate (for ALU and address calc)
-//   immediate2   — immediate + 2  (pre-computed for dual-PC fetch's TruePC_2)
-//   CTRL_*       — pipeline control signals propagated through StageIV_
+//   immediate    - 32-bit sign/zero-extended immediate (for ALU and address calc)
+//   immediate2   - immediate + 2  (pre-computed for dual-PC fetch's TruePC_2)
+//   CTRL_*       - pipeline control signals propagated through StageIV_
 //
 // All outputs are purely combinational (no clock, no state).
 // =============================================================================
@@ -172,14 +172,14 @@ module decoder_id (
 
       case (primaryOpcode)
         // ── LUI ──────────────────────────────────────────────────────────────────
-        // rd = {imm[31:12], 12'b0}  — pass upper immediate straight through ALU B
+        // rd = {imm[31:12], 12'b0}  - pass upper immediate straight through ALU B
         `OP_LUI: begin
           imm32         = immTypeU;     destRegWrite32 = 1'b1;  ALUBSel32    = 1'b1;
           ALUOpcode32   = `ALU_PASS_B;
         end
 
         // ── AUIPC ────────────────────────────────────────────────────────────────
-        // rd = PC + {imm[31:12], 12'b0}  — EX feeds PC into ALU port A via isAUIPC
+        // rd = PC + {imm[31:12], 12'b0}  - EX feeds PC into ALU port A via isAUIPC
         `OP_AUIPC: begin
           imm32         = immTypeU;     destRegWrite32 = 1'b1;  ALUBSel32    = 1'b1;
           ALUOpcode32   = `ALU_ADD;     isAUIPC32      = 1'b1;
@@ -215,7 +215,7 @@ module decoder_id (
         end
 
         // ── LOAD ─────────────────────────────────────────────────────────────────
-        // rd = sext/zext(mem[rs1 + sext(imm12)])  — width from func3
+        // rd = sext/zext(mem[rs1 + sext(imm12)])  - width from func3
         `OP_LOAD: begin
           case (func3)
             `F3_LB, `F3_LH, `F3_LW, `F3_LBU, `F3_LHU: begin
@@ -228,7 +228,7 @@ module decoder_id (
         end
 
         // ── STORE ────────────────────────────────────────────────────────────────
-        // mem[rs1 + sext(imm12)] = rs2  — width from func3
+        // mem[rs1 + sext(imm12)] = rs2  - width from func3
         `OP_STORE: begin
           case (func3)
             `F3_SB, `F3_SH, `F3_SW: begin
@@ -386,7 +386,7 @@ module decoder_id (
               immC        = immCLW;      ALUBSelC      = 1'b1; ALUOpcodeC = `ALU_ADD;
               memWriteC   = 1'b1;        storeWidthC   = 2'b10;      // SW = word
             end
-            // Reserved Q0 encodings — treat as NOP in Phase 1
+            // Reserved Q0 encodings - treat as NOP in Phase 1
             default: begin end
           endcase
         end
@@ -416,7 +416,7 @@ module decoder_id (
               immC       = immCI6;   destRegWriteC = 1'b1; ALUBSelC = 1'b1;
               ALUOpcodeC = `ALU_ADD;
             end
-            // C.ADDI16SP (rd=x2) / C.LUI (rd≠x0, rd≠x2) — both use funct3=011
+            // C.ADDI16SP (rd=x2) / C.LUI (rd≠x0, rd≠x2) - both use funct3=011
             // Distinguished by rd field; cpu.v passes StageIII_destRegIndex to tell them apart.
             `CF3_C_ADDI16SP: begin
               destRegWriteC = 1'b1;  ALUBSelC      = 1'b1;
@@ -438,7 +438,7 @@ module decoder_id (
                 2'b01: begin ALUOpcodeC = `ALU_SRA; immC = immCShamt; ALUBSelC = 1'b1; end  // C.SRAI
                 2'b10: begin ALUOpcodeC = `ALU_AND; immC = immCI6;    ALUBSelC = 1'b1; end  // C.ANDI
                 2'b11: begin
-                  // C.SUB / C.XOR / C.OR / C.AND — register-register variants
+                  // C.SUB / C.XOR / C.OR / C.AND - register-register variants
                   case (instrWord[6:5])
                     2'b00: ALUOpcodeC   = `ALU_SUB;                                         // C.SUB
                     2'b01: ALUOpcodeC   = `ALU_XOR;                                         // C.XOR
@@ -537,7 +537,7 @@ module decoder_id (
   // =============================================================================
   // Selects between the 32-bit and 16-bit decode results based on is_compressed.
   // immediate2 is computed here as selectedImmediate + 2, which avoids a
-  // separate imm2 register in both decode paths — the single adder is cheap.
+  // separate imm2 register in both decode paths - the single adder is cheap.
   // All outputs are registered into StageIV_ by the ID stage in cpu.v.
   // =============================================================================
     always @(*) begin

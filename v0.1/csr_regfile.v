@@ -17,23 +17,23 @@
 // CSR categories implemented:
 //
 //   Read-Write (stored in flip-flops):
-//     mstatus   0x300  — MIE, MPIE, MPP (other bits reserved/hardwired)
-//     mie       0x304  — MSIE, MTIE, MEIE
-//     mtvec     0x305  — base[31:2] + mode[1:0]  (mode: 00=direct, 01=vectored)
-//     mscratch  0x340  — scratch register for trap handlers
-//     mepc      0x341  — exception PC (bits [1:0] always read as 00 — halfword aligned)
-//     mcause    0x342  — interrupt bit [31] + exception code [30:0]
-//     mtval     0x343  — faulting address or instruction word
-//     mip       0x344  — interrupt pending (MSIP/MTIP/MEIP; mostly read-only
+//     mstatus   0x300  - MIE, MPIE, MPP (other bits reserved/hardwired)
+//     mie       0x304  - MSIE, MTIE, MEIE
+//     mtvec     0x305  - base[31:2] + mode[1:0]  (mode: 00=direct, 01=vectored)
+//     mscratch  0x340  - scratch register for trap handlers
+//     mepc      0x341  - exception PC (bits [1:0] always read as 00 - halfword aligned)
+//     mcause    0x342  - interrupt bit [31] + exception code [30:0]
+//     mtval     0x343  - faulting address or instruction word
+//     mip       0x344  - interrupt pending (MSIP/MTIP/MEIP; mostly read-only
 //                        in Phase 1 since we have no interrupt sources yet;
 //                        kept writable for future CLINT integration)
 //
 //   Read-Only (hardwired constants, no flip-flops consumed):
-//     mvendorid 0xF11  — 0x00000000  (non-commercial)
-//     marchid   0xF12  — 0x00000000
-//     mimpid    0xF13  — 0x00000001  (PHANTOM-32 revision 1)
-//     mhartid   0xF14  — 0x00000000  (single hart)
-//     misa      0x301  — 0x40000104  (MXL=01, extensions I+C)
+//     mvendorid 0xF11  - 0x00000000  (non-commercial)
+//     marchid   0xF12  - 0x00000000
+//     mimpid    0xF13  - 0x00000001  (PHANTOM-32 revision 1)
+//     mhartid   0xF14  - 0x00000000  (single hart)
+//     misa      0x301  - 0x40000104  (MXL=01, extensions I+C)
 //
 // Trap entry / MRET:
 //   The MA stage drives separate trap_en and mret_en strobes to update the
@@ -87,9 +87,9 @@ module csr_regfile (
   // Bits outside the mask are forced to zero on every write and reset.
   //
   // mstatus (RV32 M-only subset):
-  //   bit  3  MIE   — Machine Interrupt Enable
-  //   bit  7  MPIE  — Machine Previous Interrupt Enable
-  //   bits 12:11 MPP — Previous Privilege Mode
+  //   bit  3  MIE   - Machine Interrupt Enable
+  //   bit  7  MPIE  - Machine Previous Interrupt Enable
+  //   bits 12:11 MPP - Previous Privilege Mode
   //   All other bits are reserved and read as zero.
   // =============================================================================
   localparam MSTATUS_MASK  = 32'h0000_1888;  // bits 12:11 (MPP) + 7 (MPIE) + 3 (MIE)
@@ -177,7 +177,7 @@ module csr_regfile (
         `CSR_MTVAL:    r_mtval    <= wr_data & MTVAL_MASK;
         `CSR_MIP:      r_mip      <= wr_data & MIP_MASK;
         // Writes to read-only CSRs (misa, mvendorid, marchid, mimpid, mhartid)
-        // are silently ignored — the spec defines these as read-only and
+        // are silently ignored - the spec defines these as read-only and
         // writing them must not cause an illegal instruction exception.
         default: ; // no-op
       endcase

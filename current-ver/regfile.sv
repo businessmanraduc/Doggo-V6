@@ -6,8 +6,8 @@
 // Infers distributed LUT-RAM on Gowin GW2AR-18.
 //
 // Interface:
-//   Two asynchronous read ports   (rs1, rs2 — used simultaneously in ID)
-//   One synchronous  write port   (rd — driven by WB on rising edge)
+//   Two asynchronous read ports   (rs1, rs2 - used simultaneously in ID)
+//   One synchronous  write port   (rd - driven by WB on rising edge)
 //
 // x0 hardwired to zero:
 //   Reads  always return 32'h0.

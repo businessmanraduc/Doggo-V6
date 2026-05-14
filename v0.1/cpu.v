@@ -10,23 +10,23 @@
 //
 //  Hazards handled:
 //
-//  1. DATA HAZARD — full forwarding
+//  1. DATA HAZARD - full forwarding
 //     EX/MA result (StageV_)  forwarded to EX operand muxes  (1-cycle-old)
 //     MA/WB result (StageVI_) forwarded to EX operand muxes  (2-cycle-old)
 //     CSR read result forwarded combinationally from MA to EX (isCSR path)
 //     WB write-before-read forwarding is handled inside regfile.v itself
 //
-//  2. LOAD-USE HAZARD — 1 stall cycle
+//  2. LOAD-USE HAZARD - 1 stall cycle
 //     LW immediately followed by a dependent instruction: stall PC + StageII_ +
 //     StageIII_ for 1 cycle, bubble inserted into EX.  After stall, the loaded
 //     value arrives via the MA/WB (StageVI_) forwarding path.
 //
-//  3. CONTROL HAZARD — always-not-taken predictor, 2-cycle flush penalty
+//  3. CONTROL HAZARD - always-not-taken predictor, 2-cycle flush penalty
 //     Branch/jump resolved in EX.  If taken: flush StageIII_ and StageIV_
 //     (2 bubbles), redirect PC to TruePC.  Synchronous BRAM requires a
 //     flushDelayed register to kill the in-flight wrong fetch in cycle N+1.
 //
-//  4. TRAP / MRET — detected in EX, committed in MA
+//  4. TRAP / MRET - detected in EX, committed in MA
 //     ECALL, EBREAK, illegal instruction, load/store misalignment: detected
 //     in EX, pipeline flushed to mtvec immediately.  StageV_isTrap drives
 //     csr_regfile to save mepc/mcause/mstatus atomically in MA.
@@ -69,7 +69,7 @@ module cpu #(
   //   PC   → drives imem_addr_a  (halfword at current fetch address)
   //   PC_2 → drives imem_addr_b  (halfword at PC+2, always = PC+2)
   //
-  // PC advancement uses IF_isCompressed — the combinational output of decoder_if
+  // PC advancement uses IF_isCompressed - the combinational output of decoder_if
   // based on the BRAM data currently arriving in IF.
   //
   // Update priority (highest to lowest):
@@ -246,7 +246,7 @@ module cpu #(
     // ── Register file ─────────────────────────────────────────────────────────
     // Read ports are driven by the indices that decoder_if extracted in IF.
     // Write port is driven by WB (StageVI_).  The write-before-read forwarding
-    // from WB to ID is handled inside regfile.v — no extra logic needed here.
+    // from WB to ID is handled inside regfile.v - no extra logic needed here.
     wire [31:0] ID_rs1_data;
     wire [31:0] ID_rs2_data;
 
@@ -852,7 +852,7 @@ module cpu #(
   //
   // StageVI_writeData and StageVI_writeEnable are declared in the EX section
   // (forward declarations) because the forwarding unit needs them.
-  // The register file write port is driven by those wires — no logic here.
+  // The register file write port is driven by those wires - no logic here.
   // =============================================================================
     always @(posedge clk) begin
       if (!resetn) begin

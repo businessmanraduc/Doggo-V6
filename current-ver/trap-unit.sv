@@ -53,7 +53,7 @@ module trap_unit (
   //        always aligned (byte granularity).
   // Stores: SH requires addr[0]=0; SW requires addr[1:0]=00.  SB always OK.
   //         There is no unsigned store, so WIDTH_HU cannot appear on the write
-  //         path — WIDTH_H covers both SH cases.
+  //         path - WIDTH_H covers both SH cases.
   // ===========================================================================
   wire load_misalign  = ma_mem_read && (
     ((ma_mem_width == `WIDTH_H || ma_mem_width == `WIDTH_HU) && ma_alu_result[0]) ||
@@ -100,10 +100,10 @@ module trap_unit (
   // ===========================================================================
   // AUXILIARY TRAP VALUE  (mtval)
   // ===========================================================================
-  // EBREAK:   faulting PC — more useful than 0 for a debugger
-  // Illegal:  raw instruction word — lets the trap handler identify the encoding
+  // EBREAK:   faulting PC - more useful than 0 for a debugger
+  // Illegal:  raw instruction word - lets the trap handler identify the encoding
   // ECALL:    0 (spec says zero or unspecified; we choose zero)
-  // Misalign: offending effective address — required by spec for precise traps
+  // Misalign: offending effective address - required by spec for precise traps
   // ===========================================================================
   assign trap_mtval =
     ma_is_ebreak   ? ma_pc         :

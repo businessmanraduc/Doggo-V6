@@ -6,7 +6,7 @@
 // Provides register indices and key flags ONE STAGE EARLY so the hazard
 // unit can detect load-use dependencies before the ID stage decodes fully.
 //
-// Implements PARALLEL 16/32-bit decode paths — no decompressor step.
+// Implements PARALLEL 16/32-bit decode paths - no decompressor step.
 //
 // Register index mapping for compressed instructions:
 //   Full (CR/CI/CSS): instrWord[11:7] and instrWord[6:2]   → x0–x31

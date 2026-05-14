@@ -9,17 +9,17 @@
 //
 //  Hazards handled automatically:
 //
-//  1. DATA HAZARD — full forwarding
+//  1. DATA HAZARD - full forwarding
 //     EX/MEM result  forwarded to EX ALU inputs  (1-cycle-old result)
 //     MEM/WB result  forwarded to EX ALU inputs  (2-cycle-old result)
 //     Covers R-type, I-type, branch comparisons, and store data.
 //
-//  2. LOAD-USE HAZARD — 1 stall cycle inserted
+//  2. LOAD-USE HAZARD - 1 stall cycle inserted
 //     LW followed immediately by a dependent instruction:
 //     stall PC + IF/ID for 1 cycle, bubble inserted into EX.
 //     After stall, the load value arrives via MEM/WB forwarding.
 //
-//  3. CONTROL HAZARD — 2 flush cycles on taken branch/jump
+//  3. CONTROL HAZARD - 2 flush cycles on taken branch/jump
 //     Branch resolved in EX. If taken: flush IF and ID (2 bubbles),
 //     redirect PC to branch target.
 //
@@ -76,9 +76,9 @@ module cpu (
   // =============================================================================
   // REGISTER FILE  (8 × 16-bit, R0 hardwired to zero)
   // =============================================================================
-  // Reads are asynchronous (combinational) — values are immediately available
+  // Reads are asynchronous (combinational) - values are immediately available
   // in the ID stage without adding latency.
-  // Writes are synchronous (rising edge) — occur in the WB stage.
+  // Writes are synchronous (rising edge) - occur in the WB stage.
   // Write-before-read: if reading and writing the same address simultaneously,
   // the NEW (write) value is returned, eliminating the WB→ID forwarding path.
   // =============================================================================
@@ -485,7 +485,7 @@ module cpu (
   // Also drives the StageV_write* wires used for write-before-read forwarding in ID.
   // =============================================================================
  
-    // ── WB write signals — drive the forward-declared wires from Stage 2 ───────
+    // ── WB write signals - drive the forward-declared wires from Stage 2 ───────
     assign StageV_writeEnable   = StageV_destRegWrite && (StageV_destRegIndex != 3'd0) && !halted;
     assign StageV_writeRegIndex = StageV_destRegIndex;
     assign StageV_writeData     = StageV_Result;         // StageV_Result declared in Stage 3

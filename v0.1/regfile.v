@@ -15,7 +15,7 @@
 //
 // Write-before-read:
 //   If WB is writing to the same index that ID is reading in the same cycle,
-//   the NEW (incoming) write value is returned on the read port immediately —
+//   the NEW (incoming) write value is returned on the read port immediately -
 //   no need to wait until the next clock edge.  This is implemented as a
 //   forwarding mux on each read port and eliminates the WB→ID forwarding
 //   distance from the EX forwarding unit entirely.
@@ -44,7 +44,7 @@ module regfile (
   // =============================================================================
   // STORAGE ARRAY
   // =============================================================================
-  // Verilog reg array — GowinEDA will infer distributed LUT-RAM for this
+  // Verilog reg array - GowinEDA will infer distributed LUT-RAM for this
   // pattern (async read, sync write with explicit always @(posedge clk)).
   // =============================================================================
   reg [31:0] mem [0:31];
@@ -62,7 +62,7 @@ module regfile (
   // Writes happen on the rising clock edge, exactly one cycle after the WB
   // stage asserts wr_en.  The caller (cpu.v WB stage) is responsible for
   // gating wr_en to 0 when wr_index == 5'd0, so we do not need a second
-  // x0 guard here — but the condition costs nothing and makes this module
+  // x0 guard here - but the condition costs nothing and makes this module
   // self-contained and safe regardless of how it is instantiated.
   // =============================================================================
   always @(posedge clk) begin

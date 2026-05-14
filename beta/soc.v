@@ -11,7 +11,7 @@
 // these will be synthesised as LUT-RAM or BRAM depending on the tool version;
 // for production use add (* ram_style = "block" *) pragmas if needed.
 //
-// The instruction ROM is initialised from "program.hex" via $readmemh — this
+// The instruction ROM is initialised from "program.hex" via $readmemh - this
 // is supported both in simulation and by Gowin synthesis (BRAM init).
 // =============================================================================
 

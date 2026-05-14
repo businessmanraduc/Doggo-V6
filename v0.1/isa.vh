@@ -72,13 +72,13 @@
 // ADD and SUB share func3 = 000; they are told apart by func7 bit 30.
 // SRL and SRA share func3 = 101; same story.
 `define F3_ADD      3'b000
-`define F3_SUB      3'b000   // same as ADD — distinguished by F7_SUB below
+`define F3_SUB      3'b000   // same as ADD - distinguished by F7_SUB below
 `define F3_SLL      3'b001
 `define F3_SLT      3'b010
 `define F3_SLTU     3'b011
 `define F3_XOR      3'b100
 `define F3_SRL      3'b101
-`define F3_SRA      3'b101   // same as SRL — distinguished by F7_SRA below
+`define F3_SRA      3'b101   // same as SRL - distinguished by F7_SRA below
 `define F3_OR       3'b110
 `define F3_AND      3'b111
 
@@ -91,7 +91,7 @@
 `define F3_CSRRSI   3'b110
 `define F3_CSRRCI   3'b111
 
-// ── JALR func3 (must be 000 — any other value is illegal) ────────────────────
+// ── JALR func3 (must be 000 - any other value is illegal) ────────────────────
 `define F3_JALR     3'b000
 
 
@@ -122,7 +122,7 @@
 // ── RV32C COMPRESSED INSTRUCTION QUADRANTS ───────────────────────────────────
 // =============================================================================
 // The bottom 2 bits of a compressed instruction identify its quadrant.
-// Quadrant 3 (2'b11) is reserved for 32-bit instructions — never a C instr.
+// Quadrant 3 (2'b11) is reserved for 32-bit instructions - never a C instr.
 // =============================================================================
 `define CQ0   2'b00   // Quadrant 0
 `define CQ1   2'b01   // Quadrant 1
@@ -167,7 +167,7 @@
 `define ALU_SRA     4'h7   // a >> b[4:0] (arith, sign-fill)   (SRA, SRAI)
 `define ALU_SLT     4'h8   // ($signed(a) < $signed(b)) ? 1:0  (SLT, SLTI)
 `define ALU_SLTU    4'h9   // (a < b) ? 1 : 0  unsigned        (SLTU, SLTIU)
-`define ALU_PASS_B  4'hA   // b (pass-through)                 (LUI — rs1 unused)
+`define ALU_PASS_B  4'hA   // b (pass-through)                 (LUI - rs1 unused)
 
 
 // =============================================================================
@@ -188,7 +188,7 @@
 // ── CSR OPERATION CODES  [1:0] ───────────────────────────────────────────────
 // =============================================================================
 // Maps from func3[1:0] to the CSR operation.  func3 bit 2 distinguishes
-// register-source (0) from immediate-source (1) — handled separately by
+// register-source (0) from immediate-source (1) - handled separately by
 // StageIV_CSR_useImm.
 // =============================================================================
 `define CSR_OP_RW   2'b01   // Read-Write  (CSRRW / CSRRWI)
