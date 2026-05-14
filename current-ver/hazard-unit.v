@@ -8,7 +8,6 @@
 // A load-use hazard occurs when:
 //   1. The instruction in ID is a load (result not available until end of MA)
 //   2. The instruction in IF reads the same register the load writes to
-//
 // =============================================================================
 module hazard_unit (
   // ── From IF stage (fast_decoder, before IF/ID pipeline register) ──────────
