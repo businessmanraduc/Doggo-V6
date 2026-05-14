@@ -14,13 +14,13 @@
 // with Verilog comparison operators to keep the critical path short.
 // =============================================================================
 module alu (
-  input  wire [31:0] lhs,     // operand A  (rs1 or ProgramCounter, post-forwarding)
-  input  wire [31:0] rhs,     // operand B  (rs2 or immediate, post-ALUBSel)
-  input  wire [3:0]  op,      // operation select
-  output reg  [31:0] result   // computed result
+  input  logic [31:0] lhs,     // operand A  (rs1 or ProgramCounter, post-forwarding)
+  input  logic [31:0] rhs,     // operand B  (rs2 or immediate, post-ALUBSel)
+  input  logic [3:0]  op,      // operation select
+  output logic [31:0] result   // computed result
 );
 
-  always @(*) begin
+  always_comb begin
     case (op)
       // ── Arithmetic ─────────────────────────────────────────────────────────
       `ALU_ADD:    result = lhs + rhs;                         // ADD, ADDI, AUIPC, loads, stores

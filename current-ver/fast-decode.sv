@@ -14,41 +14,39 @@
 //     (3-bit field maps to x8–x15: index = {2'b01, field[2:0]})
 // =============================================================================
 module fast_decoder (
-  input  wire [31:0] instrWord,      // raw fetched instruction word
-  output wire        is_compressed,  // 1 = 16-bit C instruction
-  output reg  [4:0]  rs1_index,      // source register 1
-  output reg  [4:0]  rs2_index,      // source register 2
-  output reg  [4:0]  rd_index,       // destination register
-  output wire        is_load         // 1 = load instruction (triggers hazard check)
+  input  logic [31:0] instrWord,      // raw fetched instruction word
+  input  logic        is_compressed,  // 1 = 16-bit C instruction
+  output logic [4:0]  rs1_index,      // source register 1
+  output logic [4:0]  rs2_index,      // source register 2
+  output logic [4:0]  rd_index,       // destination register
+  output logic        is_load         // 1 = load instruction (triggers hazard check)
 );
-
-  assign is_compressed = (instrWord[1:0] != 2'b11);
 
   // =============================================================================
   // 32-BIT FIELD EXTRACTION
   // =============================================================================
-  wire [6:0] op32      = instrWord[6:0];
-  wire [4:0] rs1_32    = instrWord[19:15];
-  wire [4:0] rs2_32    = instrWord[24:20];
-  wire [4:0] rd_32     = instrWord[11:7];
-  wire [4:0] rs1_Sys32 = instrWord[14] ? 5'd0 : rs1_32;
+  logic [6:0] op32      = instrWord[6:0];
+  logic [4:0] rs1_32    = instrWord[19:15];
+  logic [4:0] rs2_32    = instrWord[24:20];
+  logic [4:0] rd_32     = instrWord[11:7];
+  logic [4:0] rs1_Sys32 = instrWord[14] ? 5'd0 : rs1_32;
 
   // =============================================================================
   // 16-BIT FIELD EXTRACTION
   // =============================================================================
-  wire [1:0] quad    = instrWord[1:0];    // compressed quadrant
-  wire [2:0] cfunc3  = instrWord[15:13];  // compressed func3
+  logic [1:0] quad    = instrWord[1:0];    // compressed quadrant
+  logic [2:0] cfunc3  = instrWord[15:13];  // compressed func3
   // ── Prime register fields (CL/CS/CA/CB formats → x8-x15) ─────────────────
-  wire [4:0] rs1_prime = {2'b01, instrWord[9:7]};
-  wire [4:0] rs2_prime = {2'b01, instrWord[4:2]};
+  logic [4:0] rs1_prime = {2'b01, instrWord[9:7]};
+  logic [4:0] rs2_prime = {2'b01, instrWord[4:2]};
   // ── Full register fields (CR/CI/CSS/CIW formats → x0-x31) ────────────────
-  wire [4:0] rs1_full  = instrWord[11:7]; // rd/rs1 field
-  wire [4:0] rs2_full  = instrWord[6:2];  // rs2 field
+  logic [4:0] rs1_full  = instrWord[11:7]; // rd/rs1 field
+  logic [4:0] rs2_full  = instrWord[6:2];  // rs2 field
   // =============================================================================
   // IS_LOAD DETECTION
   // =============================================================================
-  wire is_load32 = (op32 == `OP_LOAD);
-  wire is_load16 = (quad == `CQ0 && cfunc3 == `CF3_C_LW) ||
+  logic is_load32 = (op32 == `OP_LOAD);
+  logic is_load16 = (quad == `CQ0 && cfunc3 == `CF3_C_LW) ||
                    (quad == `CQ2 && cfunc3 == `CF3_C_LWSP);
   assign is_load = is_compressed ? is_load16 : is_load32;
 
@@ -75,7 +73,7 @@ module fast_decoder (
   //   SYSTEM  (CSRRx):             rs1=[19:15]  [24:20]=imm  rd=[11:7]
   //   SYSTEM  (CSRRxI, func3[2]=1):[19:15]=zimm [24:20]=imm  rd=[11:7]
   // =============================================================================
-    always @(*) begin
+    always_comb begin
       case (quad)
         // =========================================================================
         // QUADRANT 0

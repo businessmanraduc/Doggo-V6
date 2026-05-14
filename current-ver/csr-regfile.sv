@@ -26,31 +26,31 @@
 // Reserved bits masked via WARL (Write Any, Read Legal) masks.
 // ===============================================================================
 module csr_regfile (
-  input  wire        clk,
-  input  wire        resetn,         // active-low synchronous reset
+  input  logic        clk,
+  input  logic        resetn,         // active-low synchronous reset
 
   // ── Normal CSR read/write (from MA stage) ────────────────────────────────────
-  input  wire [11:0] rd_addr,        // CSR address to read
-  output reg  [31:0] rd_data,        // value at rd_addr (combinational, WBR forwarding)
-  output reg  [31:0] rd_data_raw,    // value at rd_addr (raw,        NO WBR forwarding)
+  input  logic [11:0] rd_addr,        // CSR address to read
+  output logic [31:0] rd_data,        // value at rd_addr (combinational, WBR forwarding)
+  output logic [31:0] rd_data_raw,    // value at rd_addr (raw,        NO WBR forwarding)
 
-  input  wire [11:0] wr_addr,        // CSR address to write
-  input  wire [31:0] wr_data,        // new value (after RMW by MA stage)
-  input  wire        wr_en,          // write enable
+  input  logic [11:0] wr_addr,        // CSR address to write
+  input  logic [31:0] wr_data,        // new value (after RMW by MA stage)
+  input  logic        wr_en,          // write enable
 
   // ── Trap entry (from MA stage when trap occurs) ──────────────────────────────
-  input  wire        trap_en,        // 1 = latch trap state this cycle
-  input  wire [31:0] trap_mepc,      // PC of trapping instruction → mepc
-  input  wire [31:0] trap_mcause,    // exception code → mcause
-  input  wire [31:0] trap_mtval,     // faulting address or instruction → mtval
+  input  logic        trap_en,        // 1 = latch trap state this cycle
+  input  logic [31:0] trap_mepc,      // PC of trapping instruction → mepc
+  input  logic [31:0] trap_mcause,    // exception code → mcause
+  input  logic [31:0] trap_mtval,     // faulting address or instruction → mtval
 
   // ── MRET (from MA stage) ─────────────────────────────────────────────────────
-  input  wire        mret_en,        // 1 = restore mstatus from saved fields
+  input  logic        mret_en,        // 1 = restore mstatus from saved fields
 
   // ── Direct outputs (wired from flip-flops, bypassing rd_data mux) ────────────
-  output wire [31:0] out_mstatus,    // full mstatus word (pipeline checks MIE)
-  output wire [31:0] out_mtvec,      // trap vector base + mode
-  output wire [31:0] out_mepc        // saved exception PC (for MRET target)
+  output logic [31:0] out_mstatus,    // full mstatus word (pipeline checks MIE)
+  output logic [31:0] out_mtvec,      // trap vector base + mode
+  output logic [31:0] out_mepc        // saved exception PC (for MRET target)
 );
 
   // =============================================================================
@@ -71,14 +71,14 @@ module csr_regfile (
   // =============================================================================
   // CSR FLIP-FLOP STORAGE
   // =============================================================================
-  reg [31:0] r_mstatus;   // Machine status: MIE, MPIE, MPP
-  reg [31:0] r_mie;       // Machine interrupt enable: MEIE, MTIE, MSIE
-  reg [31:0] r_mtvec;     // Trap vector base address + mode
-  reg [31:0] r_mscratch;  // Scratch register for trap handler
-  reg [31:0] r_mepc;      // Exception program counter (saved PC)
-  reg [31:0] r_mcause;    // Exception cause code
-  reg [31:0] r_mtval;     // Trap value: faulting address or instruction
-  reg [31:0] r_mip;       // Interrupt pending: MEIP, MTIP, MSIP
+  logic [31:0] r_mstatus;   // Machine status: MIE, MPIE, MPP
+  logic [31:0] r_mie;       // Machine interrupt enable: MEIE, MTIE, MSIE
+  logic [31:0] r_mtvec;     // Trap vector base address + mode
+  logic [31:0] r_mscratch;  // Scratch register for trap handler
+  logic [31:0] r_mepc;      // Exception program counter (saved PC)
+  logic [31:0] r_mcause;    // Exception cause code
+  logic [31:0] r_mtval;     // Trap value: faulting address or instruction
+  logic [31:0] r_mip;       // Interrupt pending: MEIP, MTIP, MSIP
 
 
   // =============================================================================
@@ -98,7 +98,7 @@ module csr_regfile (
   //   3. MRET       → mstatus MIE/MPIE fields restored
   //   4. Normal CSR write
   // =============================================================================
-  always @(posedge clk) begin
+  always_ff @(posedge clk) begin
     if (!resetn) begin
       r_mstatus  <= 32'h0000_1800;   // MPP=11 (M-mode), MIE=0, MPIE=0
       r_mie      <= 32'h0;
@@ -148,7 +148,7 @@ module csr_regfile (
   // return the incoming wr_data immediately (before it latches on next edge).
   // This eliminates MA→ID forwarding hazards for back-to-back CSR instructions.
   // =============================================================================
-  always @(*) begin
+  always_comb begin
     case (rd_addr)
       // ── Read-Write CSRs (with forwarding) ────────────────────────────────────
       `CSR_MSTATUS:   rd_data = (wr_en && wr_addr == `CSR_MSTATUS)  ? (wr_data & MSTATUS_MASK)  : r_mstatus;
@@ -180,7 +180,7 @@ module csr_regfile (
   // rd_data would otherwise return the new (post-write) value, corrupting the
   // rd writeback of CSRRW / CSRRS / CSRRC.
   // ===========================================================================
-  always @(*) begin
+  always_comb begin
     case (rd_addr)
       `CSR_MSTATUS:   rd_data_raw = r_mstatus;
       `CSR_MIE:       rd_data_raw = r_mie;

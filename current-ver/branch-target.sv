@@ -14,11 +14,11 @@
 // Pure combinational - no state, no clock.
 // =============================================================================
 module branch_target (
-  input  wire [31:0] pc,
-  input  wire [31:0] rs1_data,
-  input  wire [31:0] immediate,
-  input  wire        is_jalr,
-  output wire [31:0] target_addr
+  input  logic [31:0] pc,
+  input  logic [31:0] rs1_data,
+  input  logic [31:0] immediate,
+  input  logic        is_jalr,
+  output logic [31:0] target_addr
 );
 
   assign target_addr = (is_jalr)

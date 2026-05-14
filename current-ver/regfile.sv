@@ -19,30 +19,28 @@
 //   Implemented as a priority mux on each read port.
 // =============================================================================
 module regfile (
-  input  wire        clk,
+  input  logic        clk,
 
   // ── Read Port A  (rs1) ─────────────────────────────────────────────────────
-  input  wire [4:0]  rd_index_a,    // register index to read
-  output wire [31:0] rd_data_a,     // value (combinational)
+  input  logic [4:0]  rd_index_a,    // register index to read
+  output logic [31:0] rd_data_a,     // value (combinational)
 
   // ── Read Port B  (rs2) ─────────────────────────────────────────────────────
-  input  wire [4:0]  rd_index_b,
-  output wire [31:0] rd_data_b,
+  input  logic [4:0]  rd_index_b,
+  output logic [31:0] rd_data_b,
 
   // ── Write Port  (rd, from WB) ──────────────────────────────────────────────
-  input  wire [4:0]  wr_index,      // destination register
-  input  wire [31:0] wr_data,       // value to write
-  input  wire        wr_en          // write enable (high for one cycle in WB)
+  input  logic [4:0]  wr_index,      // destination register
+  input  logic [31:0] wr_data,       // value to write
+  input  logic        wr_en          // write enable (high for one cycle in WB)
 );
 
   // ===========================================================================
   // REGISTER STORAGE ARRAY
   // ===========================================================================
-  reg [31:0] regFile [0:31];
-
-  integer i;
+  logic [31:0] regFile [0:31];
   initial begin
-    for (i = 0; i < 32; i = i + 1)
+    for (int i = 0; i < 32; i++)
       regFile[i] = 32'h0;
   end
 
@@ -53,7 +51,7 @@ module regfile (
   // Writes occur on rising edge.  Caller should gate wr_en for x0, but we
   // guard it here anyway to make the module self-contained.
   // ===========================================================================
-  always @(posedge clk) begin
+  always_ff @(posedge clk) begin
     if (wr_en && (wr_index != 5'd0))
       regFile[wr_index] <= wr_data;
   end

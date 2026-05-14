@@ -12,10 +12,10 @@
 // Also used by compressed branches (C.BEQZ, C.BNEZ) - same comparison logic.
 // =============================================================================
 module branch_eval (
-  input wire [31:0] rs1_data,
-  input wire [31:0] rs2_data,
-  input wire [2:0]  branch_type,
-  output reg        branch_taken
+  input  logic [31:0] rs1_data,
+  input  logic [31:0] rs2_data,
+  input  logic [2:0]  branch_type,
+  output logic        branch_taken
 );
 
   always @(*) begin

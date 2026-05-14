@@ -23,27 +23,27 @@
 // =============================================================================
 module trap_unit (
   // ── MA-stage pipeline register contents ───────────────────────────────────
-  input  wire [31:0] ma_pc,          // PC of instruction in MA                (→ mepc)
-  input  wire [31:0] ma_instr,       // raw instruction word                   (→ mtval for illegal)
-  input  wire [31:0] ma_alu_result,  // effective address from ALU             (→ mtval for misalign)
-  input  wire        ma_mem_read,    // 1 = instruction is a load
-  input  wire        ma_mem_write,   // 1 = instruction is a store
-  input  wire [2:0]  ma_mem_width,   // load / store width (`WIDTH_* constants)
+  input  logic [31:0] ma_pc,          // PC of instruction in MA                (→ mepc)
+  input  logic [31:0] ma_instr,       // raw instruction word                   (→ mtval for illegal)
+  input  logic [31:0] ma_alu_result,  // effective address from ALU             (→ mtval for misalign)
+  input  logic        ma_mem_read,    // 1 = instruction is a load
+  input  logic        ma_mem_write,   // 1 = instruction is a store
+  input  logic [2:0]  ma_mem_width,   // load / store width (`WIDTH_* constants)
 
   // ── Decoded exception flags (from control_unit, pipelined to MA) ──────────
-  input  wire        ma_is_ecall,    // ECALL instruction
-  input  wire        ma_is_ebreak,   // EBREAK / C.EBREAK instruction
-  input  wire        ma_is_illegal,  // unrecognised or reserved encoding
-  input  wire        ma_is_mret,     // MRET return-from-trap instruction
+  input  logic        ma_is_ecall,    // ECALL instruction
+  input  logic        ma_is_ebreak,   // EBREAK / C.EBREAK instruction
+  input  logic        ma_is_illegal,  // unrecognised or reserved encoding
+  input  logic        ma_is_mret,     // MRET return-from-trap instruction
 
   // ── Outputs to csr_regfile ─────────────────────────────────────────────────
-  output wire        trap_en,        // 1 = latch mepc/mcause/mtval, update mstatus
-  output wire [31:0] trap_mepc,      // PC to save in mepc
-  output wire [31:0] trap_mcause,    // exception cause word (bit31=0, lower=code)
-  output wire [31:0] trap_mtval,     // auxiliary trap value
+  output logic        trap_en,        // 1 = latch mepc/mcause/mtval, update mstatus
+  output logic [31:0] trap_mepc,      // PC to save in mepc
+  output logic [31:0] trap_mcause,    // exception cause word (bit31=0, lower=code)
+  output logic [31:0] trap_mtval,     // auxiliary trap value
 
   // ── Return-from-trap ──────────────────────────────────────────────────────
-  output wire        mret_en         // 1 = restore mstatus.MIE from MPIE, redirect to mepc
+  output logic        mret_en         // 1 = restore mstatus.MIE from MPIE, redirect to mepc
 );
 
   // ===========================================================================
@@ -55,11 +55,11 @@ module trap_unit (
   //         There is no unsigned store, so WIDTH_HU cannot appear on the write
   //         path - WIDTH_H covers both SH cases.
   // ===========================================================================
-  wire load_misalign  = ma_mem_read && (
+  logic load_misalign  = ma_mem_read && (
     ((ma_mem_width == `WIDTH_H || ma_mem_width == `WIDTH_HU) && ma_alu_result[0]) ||
      (ma_mem_width == `WIDTH_W && ma_alu_result[1:0])
   );
-  wire store_misalign = ma_mem_write && (
+  logic store_misalign = ma_mem_write && (
      (ma_mem_width == `WIDTH_H && ma_alu_result[0]) ||
      (ma_mem_width == `WIDTH_W && ma_alu_result[1:0])
   );

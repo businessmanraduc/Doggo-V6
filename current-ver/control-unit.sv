@@ -31,43 +31,43 @@
 // ============================================================================
 module control_unit (
   // ── Instruction from IF/ID pipeline register ──────────────────────────────
-  input  wire [31:0] instrWord,     // raw 32-bit fetch word
+  input  logic [31:0] instrWord,     // raw 32-bit fetch word
  
   // ── EX stage control signals ──────────────────────────────────────────────
-  output reg  [3:0]  alu_op,        // ALU opcode  (`ALU_* constants)
-  output reg         alu_src_a,     // 0 = rs1 (forwarded)   1 = PC  (AUIPC only)
-  output reg         alu_src_b,     // 0 = rs2 (forwarded)   1 = immediate
-  output reg         is_branch,     // instruction is a conditional branch
-  output reg  [2:0]  branch_type,   // branch condition code → branch_eval
-  output reg         is_jump,       // unconditional jump  (JAL / JALR family)
-  output reg         is_jalr,       // target = rs1+imm  (JALR / C.JALR / C.JR)
+  output logic [3:0]  alu_op,        // ALU opcode  (`ALU_* constants)
+  output logic        alu_src_a,     // 0 = rs1 (forwarded)   1 = PC  (AUIPC only)
+  output logic        alu_src_b,     // 0 = rs2 (forwarded)   1 = immediate
+  output logic        is_branch,     // instruction is a conditional branch
+  output logic [2:0]  branch_type,   // branch condition code → branch_eval
+  output logic        is_jump,       // unconditional jump  (JAL / JALR family)
+  output logic        is_jalr,       // target = rs1+imm  (JALR / C.JALR / C.JR)
  
   // ── MA stage control signals ──────────────────────────────────────────────
-  output reg         mem_read,      // 1 = load from data memory
-  output reg         mem_write,     // 1 = store to data memory
-  output reg  [2:0]  mem_width,     // load/store width  (`WIDTH_* constants)
-  output reg         csr_en,        // 1 = CSR read-modify-write active
-  output reg  [1:0]  csr_op,        // CSR operation  (`CSR_OP_* constants)
-  output reg         csr_use_imm,   // 1 = use zimm field  (CSRRxI variants)
-  output reg  [11:0] csr_addr,      // CSR address from instrWord[31:20]
-  output reg         is_ecall,      // ECALL exception
-  output reg         is_ebreak,     // EBREAK / C.EBREAK exception
-  output reg         is_mret,       // MRET return from trap handler
-  output reg         is_illegal,    // unrecognized / reserved encoding → trap
+  output logic        mem_read,      // 1 = load from data memory
+  output logic        mem_write,     // 1 = store to data memory
+  output logic [2:0]  mem_width,     // load/store width  (`WIDTH_* constants)
+  output logic        csr_en,        // 1 = CSR read-modify-write active
+  output logic [1:0]  csr_op,        // CSR operation  (`CSR_OP_* constants)
+  output logic        csr_use_imm,   // 1 = use zimm field  (CSRRxI variants)
+  output logic [11:0] csr_addr,      // CSR address from instrWord[31:20]
+  output logic        is_ecall,      // ECALL exception
+  output logic        is_ebreak,     // EBREAK / C.EBREAK exception
+  output logic        is_mret,       // MRET return from trap handler
+  output logic        is_illegal,    // unrecognized / reserved encoding → trap
  
   // ── WB stage control signals ──────────────────────────────────────────────
-  output reg         reg_write,     // 1 = write result to rd in regfile
-  output reg  [1:0]  wb_sel         // writeback source select  (see header)
+  output logic        reg_write,     // 1 = write result to rd in regfile
+  output logic [1:0]  wb_sel         // writeback source select  (see header)
 );
 
   // ==========================================================================
   // FIELD EXTRACTION
   // ==========================================================================
-    wire [6:0] op32    = instrWord[6:0];
-    wire [2:0] func3   = instrWord[14:12];
-    wire       func7b5 = instrWord[30];
-    wire [1:0] quad    = instrWord[1:0];
-    wire [2:0] cfunc3  = instrWord[15:13];
+    logic [6:0] op32    = instrWord[6:0];
+    logic [2:0] func3   = instrWord[14:12];
+    logic       func7b5 = instrWord[30];
+    logic [1:0] quad    = instrWord[1:0];
+    logic [2:0] cfunc3  = instrWord[15:13];
   // ==========================================================================
   // FIELD EXTRACTION
   // ==========================================================================
@@ -76,7 +76,7 @@ module control_unit (
   // ==========================================================================
   // COMBINATIONAL DECODE
   // ==========================================================================
-    always @(*) begin
+    always_comb begin
       // ── NOP defaults - only departures are listed per opcode ──────────────
       alu_op      = `ALU_ADD; alu_src_a   = 1'b0;    alu_src_b   = 1'b0;
       reg_write   = 1'b0;     wb_sel      = 2'b00;

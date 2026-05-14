@@ -11,15 +11,15 @@
 // =============================================================================
 module hazard_unit (
   // ── From IF stage (fast_decoder, before IF/ID pipeline register) ──────────
-  input  wire [4:0]  if_rs1_index,   // rs1 of instruction currently in IF
-  input  wire [4:0]  if_rs2_index,   // rs2 of instruction currently in IF
+  input  logic [4:0]  if_rs1_index,   // rs1 of instruction currently in IF
+  input  logic [4:0]  if_rs2_index,   // rs2 of instruction currently in IF
 
   // ── From ID stage (instruction currently being decoded) ───────────────────
-  input  wire [4:0]  id_rd_index,    // destination register of ID instruction
-  input  wire        id_is_load,     // 1 = ID instruction is a load
+  input  logic [4:0]  id_rd_index,    // destination register of ID instruction
+  input  logic        id_is_load,     // 1 = ID instruction is a load
 
   // ── Stall output ──────────────────────────────────────────────────────────
-  output wire        stall           // 1 = write NOP to IF/ID, freeze PC + IF
+  output logic        stall           // 1 = write NOP to IF/ID, freeze PC + IF
 );
 
   assign stall  = ((id_is_load)
