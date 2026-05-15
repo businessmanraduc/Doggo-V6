@@ -28,11 +28,13 @@ module forward_unit (
   // ── Destination info for the instruction currently in MA ──────────────────
   input  logic [4:0]  ma_rd_index,    // rd index   (from EX/MA pipeline register)
   input  logic        ma_reg_write,   // 1 = this instruction writes a register
+  input  logic        ma_rd_nonzero,
  
   // ── Destination info for the instruction currently in WB ──────────────────
   input  logic [4:0]  wb_rd_index,    // rd index   (from MA/WB pipeline register)
   input  logic        wb_reg_write,   // 1 = this instruction writes a register
- 
+  input  logic        wb_rd_nonzero,
+
   // ── Mux select outputs ────────────────────────────────────────────────────
   output logic [1:0]  fwd_A_sel,      // select for ALU operand A  (rs1 path)
   output logic [1:0]  fwd_B_sel       // select for ALU operand B  (rs2 path)
@@ -47,11 +49,11 @@ module forward_unit (
   // ===========================================================================
     logic fwd_rs1_ma;
     assign fwd_rs1_ma = (ma_reg_write)
-                     && (ma_rd_index != 5'd0)
+                     && (ma_rd_nonzero)
                      && (ma_rd_index == ex_rs1_index);
     logic fwd_rs1_wb;
     assign fwd_rs1_wb = (wb_reg_write)
-                     && (wb_rd_index != 5'd0)
+                     && (wb_rd_nonzero)
                      && (wb_rd_index == ex_rs1_index);
     assign fwd_A_sel  = fwd_rs1_ma ? 2'b10
                       : fwd_rs1_wb ? 2'b01
@@ -59,11 +61,11 @@ module forward_unit (
 
     logic fwd_rs2_ma;
     assign fwd_rs2_ma = (ma_reg_write)
-                     && (ma_rd_index != 5'd0)
+                     && (ma_rd_nonzero)
                      && (ma_rd_index == ex_rs2_index);
     logic fwd_rs2_wb;
     assign fwd_rs2_wb = (wb_reg_write)
-                     && (wb_rd_index != 5'd0)
+                     && (wb_rd_nonzero)
                      && (wb_rd_index == ex_rs2_index);
     assign fwd_B_sel  = fwd_rs2_ma ? 2'b10
                       : fwd_rs2_wb ? 2'b01

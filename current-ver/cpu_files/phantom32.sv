@@ -135,10 +135,14 @@ module cpu (
     logic        ex_ma_isMRET;      // CSR MRET   instruction flag
     logic        ex_ma_isIllegal;   // illegal    instruction flag
     logic [31:0] ex_ma_pc;          // PC of the current instruction in MA
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] ex_ma_pc2;         // PC + 2 of the current instruction in MA
     logic [31:0] ex_ma_pc4;         // PC + 4 of the current instruction in MA
     logic        ex_ma_isComp;      // 0 = 32-bit instruction | 1 = 16-bit compressed
+    /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] ex_ma_instr;       // raw instruction word
+    logic [31:0] ex_ma_linkAddr;    // PC + 2 or PC + 4 (JAL/JALR link)
+    logic        ex_ma_rdNonZero;   // 1 = ex_ma_rdIndex != 5'd0
 
     // ── MA/WB ────────────────────────────────────────────────────────────────
     logic [31:0] ma_wb_aluResult;   // Result from the ALU unit
@@ -148,6 +152,7 @@ module cpu (
     logic [4:0]  ma_wb_rdIndex;     // rd index to write data into
     logic        ma_wb_regWrite;    // Register Write flag
     logic [1:0]  ma_wb_wbSel;       // Write-Back Stage MUX selector
+    logic        ma_wb_rdNonZero;   // 1 = ma_wb_rdIndex != 5'd0
 
   // ===========================================================================
   // PIPELINE REGISTER STORAGE
@@ -222,6 +227,7 @@ module cpu (
     logic [31:0] csr_rdData;       // CSR read with write-before-read forwarding
     /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] csr_rdDataRaw;    // CSR RAW read (NO forwarding) - used for RMW
+    logic [31:0] ex_linkAddr;      // PC + 2 or PC + 4 (JAL/JALR link)
 
     // ── MemoryAccess Stage ───────────────────────────────────────────────────
     logic [31:0] trap_mepc;        // trap mepc    value
@@ -236,7 +242,6 @@ module cpu (
     logic [31:0] csr_rs1Value;     // CSR  rs1 value
     logic [31:0] csr_wrData;       // CSR data to be written
     logic        csr_wrEnable;     // CSR Register Write flag
-    logic [31:0] ma_linkAddr;      // PC + 2 or PC + 4 (JAL/JALR link)
     logic [7:0]  load_byte;        // load instruction's fetched byte
     logic [15:0] load_halfWord;    // load instruction's fetched halfword
 
@@ -561,26 +566,28 @@ module cpu (
     end
 
     // ── MA-stage forwarding value ────────────────────────────────────────────
-    assign ma_linkAddr = ex_ma_isComp ? ex_ma_pc2 : ex_ma_pc4;
+    assign ex_linkAddr = id_ex_isComp ? id_ex_pc2 : id_ex_pc4;
     always_comb begin
       case (ex_ma_wbSel)
         2'b00: ma_fwdValue = ex_ma_aluResult;
         2'b01: ma_fwdValue = 32'hDEADBEEF;
-        2'b10: ma_fwdValue = ma_linkAddr;
+        2'b10: ma_fwdValue = ex_ma_linkAddr;
         2'b11: ma_fwdValue = csr_rdDataRaw;
       endcase
     end
 
     // ── Forwarding unit ──────────────────────────────────────────────────────
     forward_unit u_fwd (
-      .ex_rs1_index (id_ex_rs1Index),
-      .ex_rs2_index (id_ex_rs2Index),
-      .ma_rd_index  (ex_ma_rdIndex),
-      .ma_reg_write (ex_ma_regWrite),
-      .wb_rd_index  (ma_wb_rdIndex),
-      .wb_reg_write (ma_wb_regWrite),
-      .fwd_A_sel    (fwd_rs1Sel),
-      .fwd_B_sel    (fwd_rs2Sel)
+      .ex_rs1_index  (id_ex_rs1Index),
+      .ex_rs2_index  (id_ex_rs2Index),
+      .ma_rd_index   (ex_ma_rdIndex),
+      .ma_reg_write  (ex_ma_regWrite),
+      .ma_rd_nonzero (ex_ma_rdNonZero),
+      .wb_rd_index   (ma_wb_rdIndex),
+      .wb_reg_write  (ma_wb_regWrite),
+      .wb_rd_nonzero (ma_wb_rdNonZero),
+      .fwd_A_sel     (fwd_rs1Sel),
+      .fwd_B_sel     (fwd_rs2Sel)
     );
 
     // ── Three-way forwarding muxes ───────────────────────────────────────────
@@ -666,6 +673,8 @@ module cpu (
         ex_ma_pc4        <= 32'd0;
         ex_ma_isComp     <= 1'b0;
         ex_ma_instr      <= `NOP_INSTR;
+        ex_ma_linkAddr   <= 32'd0;
+        ex_ma_rdNonZero  <= 1'b0;
       end else begin
         ex_ma_aluResult  <= alu_result;
         ex_ma_rs1Fwd     <= fwd_rs1Value;
@@ -689,6 +698,8 @@ module cpu (
         ex_ma_pc4        <= id_ex_pc4;
         ex_ma_isComp     <= id_ex_isComp;
         ex_ma_instr      <= id_ex_instr;
+        ex_ma_linkAddr   <= ex_linkAddr;
+        ex_ma_rdNonZero  <= (id_ex_rdIndex != 5'd0);
       end
     end
   // ===========================================================================
@@ -860,14 +871,16 @@ module cpu (
         ma_wb_rdIndex    <= 5'd0;
         ma_wb_regWrite   <= 1'b0;
         ma_wb_wbSel      <= 2'b00;
+        ma_wb_rdNonZero  <= 1'b0;
       end else begin
         ma_wb_aluResult  <= ex_ma_aluResult;
         ma_wb_loadData   <= load_data;
         ma_wb_csrOldData <= csr_rdDataRaw;
-        ma_wb_linkAddr   <= ma_linkAddr;
+        ma_wb_linkAddr   <= ex_ma_linkAddr;
         ma_wb_rdIndex    <= ex_ma_rdIndex;
         ma_wb_regWrite   <= ex_ma_regWrite && !trap_en;
         ma_wb_wbSel      <= ex_ma_wbSel;
+        ma_wb_rdNonZero  <= ex_ma_rdNonZero;
       end
     end
   // ===========================================================================
