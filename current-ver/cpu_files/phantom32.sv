@@ -880,7 +880,7 @@ module cpu (
   // ===========================================================================
   // wb_fwdValue is a combinational assign (in the EX section above).
   // It simultaneously drives:
-  //   • regfile.wr_data  — commits the result to the architectural register file
+  //   • regfile.wr_data  - commits the result to the architectural register file
   //   • fwd_rs1Value / fwd_rs2Value via the 2'b01 path in the EX forwarding muxes
   // No additional logic is required in this stage.
   // ===========================================================================

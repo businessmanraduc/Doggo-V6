@@ -27,29 +27,29 @@ module fast_decoder (
   // =============================================================================
   // 32-BIT FIELD EXTRACTION
   // =============================================================================
-  logic [6:0] op32      = instrWord[6:0];
-  logic [4:0] rs1_32    = instrWord[19:15];
-  logic [4:0] rs2_32    = instrWord[24:20];
-  logic [4:0] rd_32     = instrWord[11:7];
-  logic [4:0] rs1_Sys32 = instrWord[14] ? 5'd0 : rs1_32;
+  logic [6:0] op32;      assign op32      = instrWord[6:0];
+  logic [4:0] rs1_32;    assign rs1_32    = instrWord[19:15];
+  logic [4:0] rs2_32;    assign rs2_32    = instrWord[24:20];
+  logic [4:0] rd_32;     assign rd_32     = instrWord[11:7];
+  logic [4:0] rs1_Sys32; assign rs1_Sys32 = instrWord[14] ? 5'd0 : rs1_32;
 
   // =============================================================================
   // 16-BIT FIELD EXTRACTION
   // =============================================================================
-  logic [1:0] quad    = instrWord[1:0];    // compressed quadrant
-  logic [2:0] cfunc3  = instrWord[15:13];  // compressed func3
+  logic [1:0] quad;      assign quad      = instrWord[1:0];    // compressed quadrant
+  logic [2:0] cfunc3;    assign cfunc3    = instrWord[15:13];  // compressed func3
   // ── Prime register fields (CL/CS/CA/CB formats → x8-x15) ─────────────────
-  logic [4:0] rs1_prime = {2'b01, instrWord[9:7]};
-  logic [4:0] rs2_prime = {2'b01, instrWord[4:2]};
+  logic [4:0] rs1_prime; assign rs1_prime = {2'b01, instrWord[9:7]};
+  logic [4:0] rs2_prime; assign rs2_prime = {2'b01, instrWord[4:2]};
   // ── Full register fields (CR/CI/CSS/CIW formats → x0-x31) ────────────────
-  logic [4:0] rs1_full  = instrWord[11:7]; // rd/rs1 field
-  logic [4:0] rs2_full  = instrWord[6:2];  // rs2 field
+  logic [4:0] rs1_full;  assign rs1_full  = instrWord[11:7]; // rd/rs1 field
+  logic [4:0] rs2_full;  assign rs2_full  = instrWord[6:2];  // rs2 field
   // =============================================================================
   // IS_LOAD DETECTION
   // =============================================================================
-  logic is_load32 = (op32 == `OP_LOAD);
-  logic is_load16 = (quad == `CQ0 && cfunc3 == `CF3_C_LW) ||
-                   (quad == `CQ2 && cfunc3 == `CF3_C_LWSP);
+  logic is_load32; assign is_load32 = (op32 == `OP_LOAD);
+  logic is_load16; assign is_load16 = (quad == `CQ0 && cfunc3 == `CF3_C_LW) ||
+                                      (quad == `CQ2 && cfunc3 == `CF3_C_LWSP);
   assign is_load = is_compressed ? is_load16 : is_load32;
 
 

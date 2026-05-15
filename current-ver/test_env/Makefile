@@ -10,7 +10,7 @@ V_FLAGS = --cc --trace -Wall -Wno-DECLFILENAME --top-module $(TOP_MODULE)
 all: run
 
 compile:
-	riscv32-none-elf-gcc -march=rv32ic -mabi=ilp32 -nostdlib -Ttext 0x0 -o program.elf program.S
+	riscv32-none-elf-gcc -march=rv32ic_zicsr -mabi=ilp32 -nostdlib -Ttext 0x0 -o program.elf program.S
 	riscv32-none-elf-objcopy -O verilog program.elf program.hex
 	cp ./../cpu_files/*.sv   ./
 	cp ./../cpu_files/isa.vh ./

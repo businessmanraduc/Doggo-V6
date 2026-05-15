@@ -1,6 +1,6 @@
-# PHANTOM-32 — RV32IC Soft Processor
+# PHANTOM-32 - RV32IC Soft Processor
 ## Architecture Reference Document
-### Version 0.1 — Pre-Implementation Draft
+### Version 0.1 - Pre-Implementation Draft
 
 ---
 
@@ -8,7 +8,7 @@
 
 1. [Overview and Design Goals](#1-overview-and-design-goals)
 2. [Top-Level Block Diagram](#2-top-level-block-diagram)
-3. [Memory Architecture — Phase 1 (BRAM-only)](#3-memory-architecture--phase-1-bram-only)
+3. [Memory Architecture - Phase 1 (BRAM-only)](#3-memory-architecture--phase-1-bram-only)
 4. [Pipeline Overview](#4-pipeline-overview)
 5. [The Fetch Unit](#5-the-fetch-unit)
 6. [The Parallel Decoder Architecture](#6-the-parallel-decoder-architecture)
@@ -19,7 +19,7 @@
 11. [Register File](#11-register-file)
 12. [ALU](#12-alu)
 13. [Instruction Coverage](#13-instruction-coverage)
-14. [Branch Prediction — Phase 1](#14-branch-prediction--phase-1)
+14. [Branch Prediction - Phase 1](#14-branch-prediction--phase-1)
 15. [Memory Interface Specification](#15-memory-interface-specification)
 16. [Control Signal Reference](#16-control-signal-reference)
 17. [Naming Conventions and Style Guide](#17-naming-conventions-and-style-guide)
@@ -30,18 +30,18 @@
 ## 1. Overview and Design Goals
 
 **PHANTOM-32** is a 32-bit soft processor targeting the Gowin GW2AR-18 FPGA (as found on the
-Sipeed Tang Nano 20K). It implements the **RV32IC** ISA — the RISC-V base integer ISA (RV32I) plus
-the compressed instruction extension (RV32C) — and is designed to be extended with the M extension
+Sipeed Tang Nano 20K). It implements the **RV32IC** ISA - the RISC-V base integer ISA (RV32I) plus
+the compressed instruction extension (RV32C) - and is designed to be extended with the M extension
 (multiply/divide) and an MMU/cache hierarchy in later phases.
 
 ### Primary Design Goals (Phase 1)
 
 | Goal | Decision |
 |------|----------|
-| ISA | RV32IC — full base integer set plus all RV32C compressed instructions |
+| ISA | RV32IC - full base integer set plus all RV32C compressed instructions |
 | Pipeline | 6-stage in-order pipeline: PreIF → IF → ID → EX → MA → WB |
-| Fetch unit | Dual-port BRAM approach (after RVCoreP-32IC) — no stall on unaligned 32-bit fetch |
-| Decoder | Parallel decode of 16-bit and 32-bit formats — no decompressor on the critical path |
+| Fetch unit | Dual-port BRAM approach (after RVCoreP-32IC) - no stall on unaligned 32-bit fetch |
+| Decoder | Parallel decode of 16-bit and 32-bit formats - no decompressor on the critical path |
 | Data hazards | Full forwarding: EX→EX and MA→EX paths, no stall for back-to-back ALU |
 | Load-use hazard | 1 stall cycle inserted automatically by hazard detection unit |
 | Control hazards | Always-not-taken predictor; 2-cycle flush penalty on taken branch/jump |
@@ -52,13 +52,13 @@ the compressed instruction extension (RV32C) — and is designed to be extended 
 
 ### Out-of-Scope for Phase 1
 
-- M extension (multiply/divide) — to be added as Phase 3
-- SDRAM controller — to be added as Phase 2
-- MMU and virtual memory — to be added as Phase 2
-- Supervisor mode (S-mode) — to be added alongside MMU
-- Interrupts (CLINT/PLIC) — to be added as Phase 2
-- Gshare branch predictor (BTB + PHT) — to be added as Phase 2
-- Peripherals (UART, HDMI, PS/2) — to be added as Phase 2 / Phase 3
+- M extension (multiply/divide) - to be added as Phase 3
+- SDRAM controller - to be added as Phase 2
+- MMU and virtual memory - to be added as Phase 2
+- Supervisor mode (S-mode) - to be added alongside MMU
+- Interrupts (CLINT/PLIC) - to be added as Phase 2
+- Gshare branch predictor (BTB + PHT) - to be added as Phase 2
+- Peripherals (UART, HDMI, PS/2) - to be added as Phase 2 / Phase 3
 
 ---
 
@@ -103,7 +103,7 @@ the compressed instruction extension (RV32C) — and is designed to be extended 
 
 ---
 
-## 3. Memory Architecture — Phase 1 (BRAM-only)
+## 3. Memory Architecture - Phase 1 (BRAM-only)
 
 Phase 1 uses only the on-chip BRAM of the GW2AR-18. No SDRAM, no cache, no MMU.
 The CPU talks directly to two BRAM blocks: one for instructions, one for data.
@@ -115,16 +115,16 @@ The CPU talks directly to two BRAM blocks: one for instructions, one for data.
 | Width | 16 bits per entry |
 | Organisation | Halfword-addressed (each address selects one 16-bit halfword) |
 | Ports | Dual-port (both ports read simultaneously, no write from CPU) |
-| Port A address | `PC[IMEM_ADDR_W:1]` — the halfword at PC |
-| Port B address | `PC[IMEM_ADDR_W:1] + 1` — the halfword immediately after |
-| Read latency | 1 cycle (synchronous BRAM read — address registered, data next cycle) |
+| Port A address | `PC[IMEM_ADDR_W:1]` - the halfword at PC |
+| Port B address | `PC[IMEM_ADDR_W:1] + 1` - the halfword immediately after |
+| Read latency | 1 cycle (synchronous BRAM read - address registered, data next cycle) |
 | Initial size | 4096 entries = 8 KB (parameterised: `IMEM_DEPTH`) |
 | Init | `$readmemh("program.hex", imem)` |
 
 **Why 16-bit width?** The RVCoreP-32IC paper demonstrates that switching to 16-bit wide IMEM
 and using both BRAM ports simultaneously is the key to fetching any instruction (compressed or not,
 aligned or misaligned across a 32-bit boundary) in a single cycle. With a 32-bit wide IMEM,
-a 32-bit instruction straddling a 32-bit boundary requires two separate accesses — killing IPC.
+a 32-bit instruction straddling a 32-bit boundary requires two separate accesses - killing IPC.
 
 **Why dual-port simultaneous access?** The Gowin GW2AR-18 BSRAM blocks support true dual-port
 (TDP) mode. Port A and Port B can read different addresses in the same cycle. By reading address
@@ -209,7 +209,7 @@ Following the PHANTOM-16 convention: **`StageN_`** signals are the pipeline regi
 | `StageV_`      | EX → MA        | EX         | MA      |
 | `StageVI_`     | MA → WB        | MA         | WB      |
 
-Stage I (PreIF) does not have an input pipeline register — it is driven by the PC register directly.
+Stage I (PreIF) does not have an input pipeline register - it is driven by the PC register directly.
 
 ### 4.3 Pipeline Timing Example (single ADD instruction)
 
@@ -222,7 +222,7 @@ NOP:                      PreIF   IF      ID      EX      MA
 ```
 
 A result written in EX (end of cycle 4) is available for forwarding into EX of the next instruction
-(beginning of cycle 4 for the dependent instruction — i.e., it must be ready by the end of cycle 3
+(beginning of cycle 4 for the dependent instruction - i.e., it must be ready by the end of cycle 3
 to be muxed in). The forwarding paths handle this correctly.
 
 ---
@@ -246,12 +246,12 @@ Byte address:    0x00  | 0x02  | 0x04  | 0x06  | 0x08  | 0x0A
 Instruction:    [   32-bit A  ] [16b B] [   32-bit C  ]
                                               ↑
                            This instruction starts at 0x06, and its upper 16 bits
-                           are at 0x08 — in the NEXT 32-bit-aligned word.
+                           are at 0x08 - in the NEXT 32-bit-aligned word.
 ```
 
 If IMEM is 32-bit wide, fetching instruction C requires two separate memory accesses: one for
 the word at `0x04` (to get C's lower 16 bits) and one for the word at `0x08` (to get C's upper
-16 bits). This is a stall every time this situation occurs — and it occurs frequently.
+16 bits). This is a stall every time this situation occurs - and it occurs frequently.
 
 ### 5.2 The Solution: 16-bit IMEM + Dual-Port Simultaneous Access
 
@@ -261,7 +261,7 @@ consecutive entries simultaneously using both BRAM ports:
 - **Port A**: reads entry at address `PC[N:1]` → provides halfword at `PC`
 - **Port B**: reads entry at address `PC[N:1] + 1` → provides halfword at `PC+2`
 
-The IF stage receives `{PortB_data, PortA_data}` — a 32-bit window starting exactly at PC.
+The IF stage receives `{PortB_data, PortA_data}` - a 32-bit window starting exactly at PC.
 
 ```
 PC = 0x06:
@@ -302,7 +302,7 @@ registers. There are five candidates:
 |-----------|-----------|
 | `PC + 2` | Current instruction is 16-bit, no stall, no flush |
 | `PC + 4` | Current instruction is 32-bit, no stall, no flush |
-| `PC`     | Stall (load-use hazard) — hold the current address |
+| `PC`     | Stall (load-use hazard) - hold the current address |
 | `PredPC` | Branch prediction says taken (Phase 1: never used; always not-taken) |
 | `TruePC` | Branch misprediction correction from EX stage |
 
@@ -319,7 +319,7 @@ simultaneously. Therefore, each of the five PC candidates also has a correspondi
 
 **Critical insight from the paper**: `PC+2, PC+4, PC+6` can all be pre-computed by replicating
 the adder logic for PC. `TruePC_2 = TruePC + 2` is computed in the EX stage pipeline alongside
-the normal `TruePC` calculation. This means **no extra adder lands on the critical path** — all
+the normal `TruePC` calculation. This means **no extra adder lands on the critical path** - all
 PC_2 candidates are ready in parallel with their corresponding PC candidates.
 
 ### 5.5 PC Update Rules (priority order)
@@ -346,7 +346,7 @@ The branch target (TruePC) is:
 `TruePC_2 = TruePC + 2` always. Both are computed in the EX stage and registered into
 `StageV_TruePC` and `StageV_TruePC_2` for forwarding back to PreIF.
 
-Wait — we resolve in EX and flush immediately. The TruePC drives the PC update directly from EX
+Wait - we resolve in EX and flush immediately. The TruePC drives the PC update directly from EX
 (not from MA as in the paper). So in our design, TruePC and TruePC_2 are computed combinationally
 in EX and registered into StageV_ for reference, but the **flush and redirect happen in the same
 cycle EX resolves the branch** (i.e., TruePC drives NextPC combinationally, not through a register).
@@ -424,7 +424,7 @@ The MUX selects based on `StageIII_IsCompressed` (the size flag propagated from 
 
 ## 7. Stage-by-Stage Description
 
-### 7.1 Stage I — PreIF (Pre-Instruction-Fetch)
+### 7.1 Stage I - PreIF (Pre-Instruction-Fetch)
 
 **Inputs**: Current PC register, `flush` signal from EX, `stall` signal from ID hazard unit,
 `TruePC` and `TruePC_2` from EX, `is_compressed` from IF (StageIII_IsCompressed).
@@ -444,7 +444,7 @@ BRAM read latency). The pipeline starts with NOP bubbles filling the early stage
 
 ---
 
-### 7.2 Stage II — IF (Instruction Fetch)
+### 7.2 Stage II - IF (Instruction Fetch)
 
 **Inputs**: `imem_data_a [15:0]` and `imem_data_b [15:0]` from BRAM (now valid, based on
 address driven last cycle by PreIF), `StageII_PC`.
@@ -471,7 +471,7 @@ The instruction currently being fetched is discarded.
 
 ---
 
-### 7.3 Stage III — ID (Instruction Decode)
+### 7.3 Stage III - ID (Instruction Decode)
 
 **Inputs**: StageIII_ registers, register file read data.
 
@@ -479,10 +479,10 @@ The instruction currently being fetched is discarded.
 1. Run ParallelDecoderID: full decode of both 32-bit and 16-bit paths in parallel, MUX on
    `StageIII_IsCompressed`
 2. Generate the 32-bit sign-extended immediate (5 types for RV32I + C-format immediates)
-3. Compute `IMM_2 = immediate + 2` (for TruePC_2 calculation in EX — see Section 5.6)
+3. Compute `IMM_2 = immediate + 2` (for TruePC_2 calculation in EX - see Section 5.6)
 4. Read register file: async read of rs1 and rs2
 5. Apply WB write-before-read forwarding (if WB is writing to the same register we are reading,
-   forward the new value immediately — eliminates the WB→ID forwarding distance as a hazard case)
+   forward the new value immediately - eliminates the WB→ID forwarding distance as a hazard case)
 6. Hazard detection: check for load-use hazard (see Section 9.2)
 7. Produce all control signals
 
@@ -494,7 +494,7 @@ rs1_data = (StageVI_writeEnable && StageVI_writeRegIndex == StageIII_rs1_index) 
            regFile[StageIII_rs1_index];
 ```
 (and similarly for rs2_data). This eliminates the WB→ID forwarding path from the EX forwarding
-unit — WB→ID is handled here for free by the write-before-read logic.
+unit - WB→ID is handled here for free by the write-before-read logic.
 
 **Output to EX** (StageIV_ registers):
 - `StageIV_PC [31:0]`
@@ -516,7 +516,7 @@ unit — WB→ID is handled here for free by the write-before-read logic.
 
 ---
 
-### 7.4 Stage IV — EX (Execute)
+### 7.4 Stage IV - EX (Execute)
 
 **Inputs**: StageIV_ registers, forwarded values from StageV_ (EX/MA) and StageVI_ (MA/WB).
 
@@ -559,7 +559,7 @@ For JALR:
 - `StageV_isMRET`
 - `StageV_HALT`
 - `StageV_LinkValue [31:0]` (PC+2 or PC+4, the return address for JAL/JALR)
-- `StageV_isLink` (1 if JAL/JALR — select LinkValue over ALUResult for register write)
+- `StageV_isLink` (1 if JAL/JALR - select LinkValue over ALUResult for register write)
 
 Also driven combinationally (NOT via StageV_ registers, used directly by PreIF this same cycle):
 - `flush [1]`: asserted when a branch is taken or a jump occurs
@@ -568,7 +568,7 @@ Also driven combinationally (NOT via StageV_ registers, used directly by PreIF t
 
 ---
 
-### 7.5 Stage V — MA (Memory Access)
+### 7.5 Stage V - MA (Memory Access)
 
 **Inputs**: StageV_ registers, DMEM read data.
 
@@ -598,7 +598,7 @@ Also driven combinationally (NOT via StageV_ registers, used directly by PreIF t
 
 ---
 
-### 7.6 Stage VI — WB (Write Back)
+### 7.6 Stage VI - WB (Write Back)
 
 **Inputs**: StageVI_ registers.
 
@@ -667,7 +667,7 @@ Also driven combinationally (NOT via StageV_ registers, used directly by PreIF t
 | `StageIV_isECALL` | 1 | ECALL instruction |
 | `StageIV_isEBREAK` | 1 | EBREAK instruction |
 | `StageIV_isIllegal` | 1 | Illegal/unrecognized instruction |
-| `StageIV_HALT` | 1 | HALT (custom) — stop CPU when this retires |
+| `StageIV_HALT` | 1 | HALT (custom) - stop CPU when this retires |
 
 ### 8.4 StageV_ Registers (EX → MA)
 
@@ -713,7 +713,7 @@ Also driven combinationally (NOT via StageV_ registers, used directly by PreIF t
 
 ## 9. Hazard Handling
 
-### 9.1 Data Hazards — Full Forwarding
+### 9.1 Data Hazards - Full Forwarding
 
 A data hazard occurs when an instruction in EX needs a value that a newer-in-time instruction
 (further along the pipeline) has not yet written back to the register file.
@@ -750,13 +750,13 @@ rs1_forwarded =
 stored (rs2) may also need to be forwarded from the MA/WB stage. This is handled identically
 with `forward_b`.
 
-### 9.2 Load-Use Hazard — 1 Stall Cycle
+### 9.2 Load-Use Hazard - 1 Stall Cycle
 
 A load-use hazard occurs when a load instruction is in EX (Stage IV) and the immediately
 following instruction in ID (Stage III) reads the register that the load is writing.
 
 The load result is not available until the end of MA (Stage V). By that time, the dependent
-instruction would already be in EX — too late for the normal EX/MA forward path to help.
+instruction would already be in EX - too late for the normal EX/MA forward path to help.
 The solution is to stall for one cycle: the load completes MA, and the result is forwarded
 via the MA/WB (StageVI_) path into EX on the next cycle.
 
@@ -787,7 +787,7 @@ ADD r2:        Pre   IF    ID    --    EX    MA   (-- = 1 stall cycle with NOP b
            stall=1 detected here, NOP inserted into EX at cycle 4
 ```
 
-### 9.3 Control Hazards — 2-Cycle Flush on Taken Branch/Jump
+### 9.3 Control Hazards - 2-Cycle Flush on Taken Branch/Jump
 
 Branches are resolved at the end of the EX stage (Stage IV). With the always-not-taken
 predictor, we always speculatively fetch the fall-through instructions. If the branch is
@@ -810,7 +810,7 @@ two cycles after the flush.
 **Branch penalty**: 2 cycles for every taken branch or jump.
 
 **Not-taken prediction**: For not-taken branches, the fall-through instruction was
-already correctly fetched — no penalty at all.
+already correctly fetched - no penalty at all.
 
 **JAL/JALR**: These always flush (unconditional, `doJump = 1` always). The only way to
 reduce the penalty would be to resolve the jump target earlier (e.g., in ID), which we
@@ -836,7 +836,7 @@ Access is via CSRRW/CSRRS/CSRRC/CSRRWI/CSRRSI/CSRRCI instructions decoded in ID.
 | 0x304 | `mie` | 32 | Machine interrupt enable (MSIE bit 3, MTIE bit 7, MEIE bit 11) |
 | 0x305 | `mtvec` | 32 | Trap vector: base address [31:2], mode [1:0] (00=direct, 01=vectored) |
 | 0x340 | `mscratch` | 32 | Scratch register for trap handlers |
-| 0x341 | `mepc` | 32 | Exception PC — address of the instruction that caused the trap |
+| 0x341 | `mepc` | 32 | Exception PC - address of the instruction that caused the trap |
 | 0x342 | `mcause` | 32 | Exception cause: bit31=interrupt, bits[30:0]=cause code |
 | 0x343 | `mtval` | 32 | Trap value: faulting address (misaligned) or instruction word (illegal) |
 | 0x344 | `mip` | 32 | Machine interrupt pending (read-mostly; MSIP/MTIP/MEIP) |
@@ -849,9 +849,9 @@ Access is via CSRRW/CSRRS/CSRRC/CSRRWI/CSRRSI/CSRRCI instructions decoded in ID.
 **`mstatus` field layout (relevant bits)**:
 
 ```
-Bit  3: MIE   — Machine Interrupt Enable (global)
-Bit  7: MPIE  — Machine Previous Interrupt Enable (saved MIE on trap entry)
-Bits 12:11: MPP — Previous privilege mode (always 11 = M-mode in Phase 1, so fixed)
+Bit  3: MIE   - Machine Interrupt Enable (global)
+Bit  7: MPIE  - Machine Previous Interrupt Enable (saved MIE on trap entry)
+Bits 12:11: MPP - Previous privilege mode (always 11 = M-mode in Phase 1, so fixed)
 ```
 
 ### 10.2 Trap Causes (mcause values)
@@ -937,8 +937,8 @@ The result (old CSR value) is written back to `rd` in WB via the normal register
 | Entries | 32 registers (x0–x31) |
 | Width | 32 bits per register |
 | x0 | Hardwired to zero: reads always return 0, writes discarded |
-| Read ports | 2 asynchronous (combinational) — for rs1 and rs2 in ID |
-| Write port | 1 synchronous (rising edge) — from WB |
+| Read ports | 2 asynchronous (combinational) - for rs1 and rs2 in ID |
+| Write port | 1 synchronous (rising edge) - from WB |
 | Technology | LUT-RAM (distributed RAM on GW2AR-18) |
 | Write-before-read | Implemented in the read mux: if WB is writing the same index we are reading, the new value is returned immediately (no need to wait for posedge) |
 
@@ -1148,7 +1148,7 @@ Note: rd', rs1', rs2' use 3-bit compressed register encoding → actual register
 
 ---
 
-## 14. Branch Prediction — Phase 1
+## 14. Branch Prediction - Phase 1
 
 **Policy**: Always Not-Taken.
 
@@ -1159,7 +1159,7 @@ No BTB, no PHT, no history.
 **Not-taken branch cost**: 0 cycles (sequential fetch was correct).
 
 This is intentionally simple. The infrastructure for the always-not-taken predictor is exactly
-what a gshare predictor needs — the only additions for Phase 2 are the BTB (maps PC to target)
+what a gshare predictor needs - the only additions for Phase 2 are the BTB (maps PC to target)
 and PHT (maps history hash to predicted direction). The `PredPC` candidate in the PC mux is
 already a placeholder for this.
 
@@ -1189,7 +1189,7 @@ Default: `IMEM_DEPTH = 4096`, `IMEM_ADDR_W = 12`.
 
 The PC used to compute `imem_addr_a` is `PC[12:1]` (drops bit 0, which is always 0 for halfword
 alignment; drops bits above 12 since we address 4096 entries). In the final version, PC width
-must match IMEM depth — this will be parameterised.
+must match IMEM depth - this will be parameterised.
 
 ### 15.2 DMEM Interface (CPU ↔ BRAM)
 
@@ -1246,11 +1246,11 @@ This table maps instruction class to control signal values. All unlisted signals
 | Load (LW/LH/…) | 1 | 1 | 0 | 0 | 0 | 1 | 1 | 0 | ADD |
 | Store (SW/SH/…) | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 0 | ADD |
 | Branch (BEQ/BNE/…) | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | varies |
-| JAL | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | — |
+| JAL | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | - |
 | JALR | 1 | 0 | 0 | 0 | 1 | 1 | 0 | 1 | ADD |
-| ECALL/EBREAK | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — |
-| CSR* | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — |
-| FENCE/FENCE.I | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | — (NOP) |
+| ECALL/EBREAK | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | - |
+| CSR* | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | - |
+| FENCE/FENCE.I | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | - (NOP) |
 
 **Notes**:
 - For AUIPC, `ALU_A` is PC (not rs1); the decoder sets a special `isAUIPC` flag so EX feeds
@@ -1394,21 +1394,21 @@ This table maps instruction class to control signal values. All unlisted signals
 
 ## 18. Implementation Phases and Roadmap
 
-### Phase 1 — Base RV32IC CPU with BRAM (Current)
+### Phase 1 - Base RV32IC CPU with BRAM (Current)
 
 **Goal**: A fully functional, synthesisable RV32IC CPU that passes a self-checking testbench.
 
 Deliverables in order of implementation:
-1. `isa.vh` — all constants
-2. `alu.v` — combinational ALU
-3. `regfile.v` — LUT-RAM register file
-4. `decoder_if.v` — ParallelDecoderIF (lightweight, hazard-focused)
-5. `decoder_id.v` — ParallelDecoderID (full decode, both 32-bit and 16-bit paths)
-6. `csr_regfile.v` — M-mode CSR register file
-7. `cpu.v` — 6-stage pipeline (all stages, all hazard paths, M-mode traps)
-8. `soc.v` — SoC wrapper with dual-port IMEM and DMEM
-9. `tb_icarus.v` — testbench with self-checking assertions
-10. `assembler.py` / test programs — RISC-V assembly programs for verification
+1. `isa.vh` - all constants
+2. `alu.v` - combinational ALU
+3. `regfile.v` - LUT-RAM register file
+4. `decoder_if.v` - ParallelDecoderIF (lightweight, hazard-focused)
+5. `decoder_id.v` - ParallelDecoderID (full decode, both 32-bit and 16-bit paths)
+6. `csr_regfile.v` - M-mode CSR register file
+7. `cpu.v` - 6-stage pipeline (all stages, all hazard paths, M-mode traps)
+8. `soc.v` - SoC wrapper with dual-port IMEM and DMEM
+9. `tb_icarus.v` - testbench with self-checking assertions
+10. `assembler.py` / test programs - RISC-V assembly programs for verification
 11. FPGA synthesis and timing closure on Tang Nano 20K
 
 **Verification milestones**:
@@ -1422,19 +1422,19 @@ Deliverables in order of implementation:
 - M-mode: ECALL, EBREAK, illegal instruction, misaligned access, MRET all work
 - Dhrystone / CoreMark on BRAM (future milestone once programs fit in BRAM)
 
-### Phase 2 — SDRAM, Cache, MMU, Interrupts, Branch Predictor, UART
+### Phase 2 - SDRAM, Cache, MMU, Interrupts, Branch Predictor, UART
 
 Prerequisites: Phase 1 complete and fully verified.
 
 - SDRAM controller for the GW2AR-18 embedded 64 Mbit SDRAM (8 MB)
 - I-cache and D-cache backed by SDRAM (BRAM becomes cache, not primary storage)
-- MMU with page tables (Sv32 mode — 2-level page table, 32-bit virtual addresses)
+- MMU with page tables (Sv32 mode - 2-level page table, 32-bit virtual addresses)
 - CLINT (Core-Local Interruptor) for machine timer and software interrupts
 - UART peripheral for serial I/O
 - Gshare branch predictor (BTB in BRAM, PHT in BRAM)
 - Upgrade to full S-mode for OS support
 
-### Phase 3 — M Extension, HDMI, PS/2, User Programs
+### Phase 3 - M Extension, HDMI, PS/2, User Programs
 
 Prerequisites: Phase 2 complete.
 
@@ -1447,5 +1447,5 @@ Prerequisites: Phase 2 complete.
 ---
 
 *Document version 0.1. All design decisions in this document are subject to revision during
-implementation — if a better approach is discovered while writing RTL, update this document
+implementation - if a better approach is discovered while writing RTL, update this document
 first and then the code.*

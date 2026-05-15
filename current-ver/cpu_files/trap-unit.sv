@@ -55,11 +55,13 @@ module trap_unit (
   //         There is no unsigned store, so WIDTH_HU cannot appear on the write
   //         path - WIDTH_H covers both SH cases.
   // ===========================================================================
-  logic load_misalign  = ma_mem_read && (
+  logic load_misalign;
+  assign load_misalign  = ma_mem_read && (
     ((ma_mem_width == `WIDTH_H || ma_mem_width == `WIDTH_HU) && ma_alu_result[0]) ||
      (ma_mem_width == `WIDTH_W && |ma_alu_result[1:0])
   );
-  logic store_misalign = ma_mem_write && (
+  logic store_misalign;
+  assign store_misalign = ma_mem_write && (
      (ma_mem_width == `WIDTH_H && ma_alu_result[0]) ||
      (ma_mem_width == `WIDTH_W && |ma_alu_result[1:0])
   );

@@ -63,11 +63,11 @@ module control_unit (
   // ==========================================================================
   // FIELD EXTRACTION
   // ==========================================================================
-    logic [6:0] op32    = instrWord[6:0];
-    logic [2:0] func3   = instrWord[14:12];
-    logic       func7b5 = instrWord[30];
-    logic [1:0] quad    = instrWord[1:0];
-    logic [2:0] cfunc3  = instrWord[15:13];
+    logic [6:0] op32;    assign op32    = instrWord[6:0];
+    logic [2:0] func3;   assign func3   = instrWord[14:12];
+    logic       func7b5; assign func7b5 = instrWord[30];
+    logic [1:0] quad;    assign quad    = instrWord[1:0];
+    logic [2:0] cfunc3;  assign cfunc3  = instrWord[15:13];
   // ==========================================================================
   // FIELD EXTRACTION
   // ==========================================================================
