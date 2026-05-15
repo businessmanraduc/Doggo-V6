@@ -18,7 +18,7 @@ module branch_eval (
   output logic        branch_taken
 );
 
-  always @(*) begin
+  always_comb begin
     case (branch_type)
       `F3_BEQ:  branch_taken = (rs1_data == rs2_data);
       `F3_BNE:  branch_taken = (rs1_data != rs2_data);
