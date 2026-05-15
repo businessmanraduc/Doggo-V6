@@ -7,5 +7,8 @@ pkgs.mkShell {
     verilator
     gtkwave
     python3
+    autoconf
+    automake
+    gnumake
   ];
 }
