@@ -1,5 +1,7 @@
 *.vcd
 *.hex
 sim_icarus
-current-ver/tb/
-
+current-ver/test_env/*.sv
+current-ver/test_env/isa.vh
+current-ver/test_env/obj_dir
+current-ver/test_env/program.*
