@@ -57,11 +57,11 @@ module trap_unit (
   // ===========================================================================
   logic load_misalign  = ma_mem_read && (
     ((ma_mem_width == `WIDTH_H || ma_mem_width == `WIDTH_HU) && ma_alu_result[0]) ||
-     (ma_mem_width == `WIDTH_W && ma_alu_result[1:0])
+     (ma_mem_width == `WIDTH_W && |ma_alu_result[1:0])
   );
   logic store_misalign = ma_mem_write && (
      (ma_mem_width == `WIDTH_H && ma_alu_result[0]) ||
-     (ma_mem_width == `WIDTH_W && ma_alu_result[1:0])
+     (ma_mem_width == `WIDTH_W && |ma_alu_result[1:0])
   );
 
 

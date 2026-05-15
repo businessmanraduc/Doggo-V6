@@ -14,7 +14,9 @@
 //     (3-bit field maps to x8–x15: index = {2'b01, field[2:0]})
 // =============================================================================
 module fast_decoder (
+  /* verilator lint_off UNUSEDSIGNAL */
   input  logic [31:0] instrWord,      // raw fetched instruction word
+  /* verilator lint_on UNUSEDSIGNAL */
   input  logic        is_compressed,  // 1 = 16-bit C instruction
   output logic [4:0]  rs1_index,      // source register 1
   output logic [4:0]  rs2_index,      // source register 2

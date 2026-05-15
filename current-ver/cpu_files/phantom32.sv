@@ -111,7 +111,9 @@ module cpu (
     logic [31:0] id_ex_pc4;         // PC + 4 of the current instruction in EX
     logic        id_ex_isComp;      // 0 = 32-bit instruction | 1 = 16-bit compressed
     logic [31:0] id_ex_imm;         // Immediate value
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] id_ex_imm2;        // Immediate + 2
+    /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] id_ex_instr;       // raw instruction word
 
     // ── EX/MA ────────────────────────────────────────────────────────────────
@@ -216,7 +218,9 @@ module cpu (
     logic [31:0] alu_result;       // ALU output result value
     logic        branch_taken;     // Computed (NOT predicted) branch taken
     logic [31:0] ex_targetAddr;    // PC's target address (IF branch taken)
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] csr_rdData;       // CSR read with write-before-read forwarding
+    /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] csr_rdDataRaw;    // CSR RAW read (NO forwarding) - used for RMW
 
     // ── MemoryAccess Stage ───────────────────────────────────────────────────
@@ -225,7 +229,9 @@ module cpu (
     logic [31:0] trap_mtval;       // trap mtval   value
     logic [31:0] csr_mtvec;        // CSR  mtvec   value
     logic [31:0] csr_mepc;         // CSR  mepc    value
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] csr_mstatus;      // CSR  mstatus value
+    /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] csr_zimm;         // CSR  immediate
     logic [31:0] csr_rs1Value;     // CSR  rs1 value
     logic [31:0] csr_wrData;       // CSR data to be written
