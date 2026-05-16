@@ -72,8 +72,8 @@ fi
 # ── Pre-flight checks ─────────────────────────────────────────────────────────
 if [ ! -f "$SIM" ]; then
   echo "ERROR: Verilator sim not found at $SIM"
-  echo "       Run:  cd test_env && make && cd .."
-  exit 1
+  echo "Runing:  cd test_env && make && cd .."
+  cd "$TEST_ENV" && make && cd ..
 fi
 
 if [ ! -d "$RISCV_TESTS/isa/rv32ui" ]; then
@@ -187,5 +187,6 @@ else
   echo ""
   echo "All tests passed! :D"
   echo ""
+  cd "$TEST_ENV" && make clean && cd ..
   exit 0
 fi
