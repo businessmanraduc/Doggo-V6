@@ -66,7 +66,13 @@ RV32UC_TESTS=(
 if [[ "${1:-}" == "--clean" ]]; then
   echo "Cleaning build directory..."
   rm -rf "$BUILD_DIR"
+  cd "$TEST_ENV" && make && cd ..
   exit 0
+fi
+
+if [[ "${1:-}" == "--recompile-cpu" ]]; then
+  echo "Recompiling Verilator CPU..."
+  cd "$TEST_ENV" && make && cd ..
 fi
 
 # ── Pre-flight checks ─────────────────────────────────────────────────────────
@@ -187,6 +193,5 @@ else
   echo ""
   echo "All tests passed! :D"
   echo ""
-  cd "$TEST_ENV" && make clean && cd ..
   exit 0
 fi

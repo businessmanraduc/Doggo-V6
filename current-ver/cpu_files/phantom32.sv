@@ -72,7 +72,7 @@ module cpu (
     // ── IF/ID ────────────────────────────────────────────────────────────────
     logic [31:0] if_id_instr;       // assembled instruction word
     logic [31:0] if_id_pc;          // PC of the current instruction in ID
-    logic [31:0] if_id_pc2;         // PC + 2 of the cureent instruction in ID
+    logic [31:0] if_id_pc2;         // PC + 2 of the current instruction in ID
     logic [31:0] if_id_pc4;         // PC + 4 of the current instruction in ID
     logic        if_id_isComp;      // 0 = 32-bit instruction | 1 = 16-bit compressed
     logic [4:0]  if_id_rs1Index;    // rs1 index (from fast_decoder)
@@ -95,10 +95,10 @@ module cpu (
     logic [1:0]  id_ex_csrOp;       // CSR opcode
     logic        id_ex_csrUseImm;   // CSR use-immediate flag
     logic [11:0] id_ex_csrIndex;    // CSR register index
-    logic        id_ex_isECALL;     // CSR ECALL  instruction flag
-    logic        id_ex_isEBREAK;    // CSR EBREAK instruction flag
-    logic        id_ex_isMRET;      // CSR MRET   instruction flag
-    logic        id_ex_isIllegal;   // illegal    instruction flag
+    logic        id_ex_isECALL;     // ECALL   instruction flag
+    logic        id_ex_isEBREAK;    // EBREAK  instruction flag
+    logic        id_ex_isMRET;      // MRET    instruction flag
+    logic        id_ex_isIllegal;   // illegal instruction flag
     logic        id_ex_regWrite;    // Register Write flag
     logic [1:0]  id_ex_wbSel;       // Write-Back Stage MUX selector
     logic [31:0] id_ex_rs1Data;     // regfile rs1 read
@@ -130,10 +130,10 @@ module cpu (
     logic [1:0]  ex_ma_csrOp;       // CSR opcode
     logic        ex_ma_csrUseImm;   // CSR use-immediate flag
     logic [11:0] ex_ma_csrIndex;    // CSR register index
-    logic        ex_ma_isECALL;     // CSR ECALL  instruction flag
-    logic        ex_ma_isEBREAK;    // CSR EBREAK instruction flag
-    logic        ex_ma_isMRET;      // CSR MRET   instruction flag
-    logic        ex_ma_isIllegal;   // illegal    instruction flag
+    logic        ex_ma_isECALL;     // ECALL   instruction flag
+    logic        ex_ma_isEBREAK;    // EBREAK  instruction flag
+    logic        ex_ma_isMRET;      // MRET    instruction flag
+    logic        ex_ma_isIllegal;   // illegal instruction flag
     logic [31:0] ex_ma_pc;          // PC of the current instruction in MA
     /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] ex_ma_pc2;         // PC + 2 of the current instruction in MA
@@ -143,6 +143,7 @@ module cpu (
     logic [31:0] ex_ma_instr;       // raw instruction word
     logic [31:0] ex_ma_linkAddr;    // PC + 2 or PC + 4 (JAL/JALR link)
     logic        ex_ma_rdNonZero;   // 1 = ex_ma_rdIndex != 5'd0
+    logic        ex_ma_csrWrGuard;  // 1 = csr write is allowed
 
     // ── MA/WB ────────────────────────────────────────────────────────────────
     logic [31:0] ma_wb_aluResult;   // Result from the ALU unit
@@ -168,6 +169,9 @@ module cpu (
     logic        branch_flush;    // Branch Flush (misprediction) flag
     logic        trap_en;         // Trap Enable flag
     logic        mret_en;         // MRET flag
+    logic        flush_if_id;     // 1 = flush the IF/ID pipeline register
+    logic        flush_id_ex;     // 1 = flush the ID/EX pipeline register
+    logic        flush_ex_ma;     // 1 = flush the EX/MA pipeline register
     logic [31:0] nextPC;          // NextPC     value from NextPC MUX
     logic [31:0] nextPC2;         // NextPC + 2 value from NextPC MUX
 
@@ -222,12 +226,13 @@ module cpu (
     logic [31:0] alu_RHS;          // ALU RHS input value
     logic [31:0] alu_result;       // ALU output result value
     logic        branch_taken;     // Computed (NOT predicted) branch taken
-    logic [31:0] ex_targetAddr;    // PC's target address (IF branch taken)
+    logic [31:0] ex_targetAddr;    // branch/jump target address
     /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] csr_rdData;       // CSR read with write-before-read forwarding
     /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] csr_rdDataRaw;    // CSR RAW read (NO forwarding) - used for RMW
     logic [31:0] ex_linkAddr;      // PC + 2 or PC + 4 (JAL/JALR link)
+    logic        ex_csrWrGuard;    // 1 = write is allowed
 
     // ── MemoryAccess Stage ───────────────────────────────────────────────────
     logic [31:0] trap_mepc;        // trap mepc    value
@@ -242,8 +247,6 @@ module cpu (
     logic [31:0] csr_rs1Value;     // CSR  rs1 value
     logic [31:0] csr_wrData;       // CSR data to be written
     logic        csr_wrEnable;     // CSR Register Write flag
-    logic [7:0]  load_byte;        // load instruction's fetched byte
-    logic [15:0] load_halfWord;    // load instruction's fetched halfword
 
     // ── MemoryAccess Combinational Registers ─────────────────────────────────
     logic [31:0] load_data;        // load instruction's fetched data
@@ -354,8 +357,9 @@ module cpu (
   //   PC is held so the suppressed instruction is re-fetched next cycle.
   // Normal: capture current IF-stage fetch.
   // ===========================================================================
+    assign flush_if_id = branch_flush || trap_en || mret_en;
     always_ff @(posedge clk) begin
-      if (!resetn || branch_flush || trap_en || mret_en) begin
+      if (!resetn || flush_if_id) begin
         if_id_instr     <= `NOP_INSTR;
         if_id_pc        <= 32'd0;
         if_id_pc2       <= 32'd0;
@@ -457,8 +461,9 @@ module cpu (
   // The NOP was already written to IF/ID so the dependent instruction cannot
   // enter this register.
   // ===========================================================================
+    assign flush_id_ex = branch_flush | trap_en | mret_en;
     always_ff @(posedge clk) begin
-      if (!resetn || branch_flush || trap_en || mret_en) begin
+      if (!resetn || flush_id_ex) begin
         id_ex_aluOp      <= `ALU_ADD;
         id_ex_aluLHS     <= 1'b0;
         id_ex_aluRHS     <= 1'b0;
@@ -637,6 +642,11 @@ module cpu (
       .is_jalr     (id_ex_isJalr),
       .target_addr (ex_targetAddr)
     );
+
+    assign ex_csrWrGuard = (id_ex_csrOp == `CSR_OP_RW) || (id_ex_csrUseImm
+      ? (|id_ex_instr[19:15])
+      : (id_ex_rs1Index != 5'd0));
+
   // ===========================================================================
   // EX STAGE
   // ===========================================================================
@@ -649,8 +659,9 @@ module cpu (
   // rs1Fwd / rs2Fwd carry the forwarded operands into MA for CSR RMW and
   // store data respectively.
   // ===========================================================================
+    assign flush_ex_ma = trap_en || mret_en;
     always_ff @(posedge clk) begin
-      if (!resetn || trap_en || mret_en) begin
+      if (!resetn || flush_ex_ma) begin
         ex_ma_aluResult  <= 32'd0;
         ex_ma_rs1Fwd     <= 32'd0;
         ex_ma_rs2Fwd     <= 32'd0;
@@ -675,6 +686,7 @@ module cpu (
         ex_ma_instr      <= `NOP_INSTR;
         ex_ma_linkAddr   <= 32'd0;
         ex_ma_rdNonZero  <= 1'b0;
+        ex_ma_csrWrGuard <= 1'b0;
       end else begin
         ex_ma_aluResult  <= alu_result;
         ex_ma_rs1Fwd     <= fwd_rs1Value;
@@ -700,6 +712,7 @@ module cpu (
         ex_ma_instr      <= id_ex_instr;
         ex_ma_linkAddr   <= ex_linkAddr;
         ex_ma_rdNonZero  <= (id_ex_rdIndex != 5'd0);
+        ex_ma_csrWrGuard <= ex_csrWrGuard;
       end
     end
   // ===========================================================================
@@ -734,11 +747,13 @@ module cpu (
     // csr_rdDataRaw is the raw flip-flop value, free of write-before-read
     // forwarding, so csr_wrData does not feed back into csr_rdDataRaw.
     //
-    // CSRRxI variants: fast_decoder set rs1 to x0 (ex_ma_rs1Fwd = 0).
+    // CSRRxI variants: fast_decoder sets rs1 to x0, so ex_ma_rs1Fwd = 0.
     //   The real 5-bit zimm lives in ex_ma_instr[19:15] and is zero-extended.
+    //   csr_rs1Value selects zimm over the (zero) forwarded rs1 for the RMW data.
     //
-    // CSRRS/CSRRC: if rs1=x0 or zimm=0 the CSR must NOT be written (read-only
-    //   access semantics).  CSRRW always writes regardless.
+    // Write guard (ex_ma_csrWrGuard): pre-computed in EX from the register index
+    //   and zimm field per spec — CSRRS/CSRRC suppress the write only when
+    //   rs1 = x0 (reg form) or zimm = 0 (imm form); CSRRW always writes.
     assign        csr_zimm     = {27'd0, ex_ma_instr[19:15]};
     assign        csr_rs1Value = ex_ma_csrUseImm ? csr_zimm : ex_ma_rs1Fwd;
     logic  [31:0] csr_wrDataRS;
@@ -753,8 +768,7 @@ module cpu (
         default:    csr_wrData = 32'd0;
       endcase
     end
-    assign csr_wrEnable = ex_ma_csrEnable
-      && (ex_ma_csrOp == `CSR_OP_RW || csr_rs1Value != 32'd0);
+    assign csr_wrEnable = ex_ma_csrEnable && ex_ma_csrWrGuard;
 
     // ── CSR register file ────────────────────────────────────────────────────
     // Read and write both happen in MA stage (rd_addr = ex_ma_csrIndex).
@@ -783,29 +797,27 @@ module cpu (
     // DMEM returns a full 32-bit word.  The two low address bits select which
     // byte or halfword lane to extract, which is then sign/zero-extended.
     always_comb begin
-      case (ex_ma_aluResult[1:0])
-        2'b00: load_byte = dmem_rdata[7:0];
-        2'b01: load_byte = dmem_rdata[15:8];
-        2'b10: load_byte = dmem_rdata[23:16];
-        2'b11: load_byte = dmem_rdata[31:24];
-      endcase
-    end
-
-    always_comb begin
-      case (ex_ma_aluResult[1])
-        1'b0: load_halfWord = dmem_rdata[15:0];
-        1'b1: load_halfWord = dmem_rdata[31:16];
-      endcase
-    end
-
-    always_comb begin
-      case (ex_ma_memWidth)
-        `WIDTH_B:  load_data = {{24{load_byte[7]}},      load_byte};
-        `WIDTH_H:  load_data = {{16{load_halfWord[15]}}, load_halfWord};
-        `WIDTH_W:  load_data = dmem_rdata;
-        `WIDTH_BU: load_data = {24'd0, load_byte};
-        `WIDTH_HU: load_data = {16'd0, load_halfWord};
-        default:   load_data = dmem_rdata;
+      unique case ({ex_ma_memWidth, ex_ma_aluResult[1:0]})
+        // ── LB  (signed byte) ─────────────────────────────────────────────────
+        {`WIDTH_B,  2'b00}: load_data = {{24{dmem_rdata[7]}},  dmem_rdata[7:0]};
+        {`WIDTH_B,  2'b01}: load_data = {{24{dmem_rdata[15]}}, dmem_rdata[15:8]};
+        {`WIDTH_B,  2'b10}: load_data = {{24{dmem_rdata[23]}}, dmem_rdata[23:16]};
+        {`WIDTH_B,  2'b11}: load_data = {{24{dmem_rdata[31]}}, dmem_rdata[31:24]};
+        // ── LH  (signed halfword) ─────────────────────────────────────────────
+        {`WIDTH_H,  2'b00}: load_data = {{16{dmem_rdata[15]}}, dmem_rdata[15:0]};
+        {`WIDTH_H,  2'b10}: load_data = {{16{dmem_rdata[31]}}, dmem_rdata[31:16]};
+        // ── LW  (word) ────────────────────────────────────────────────────────
+        {`WIDTH_W,  2'b00}: load_data = dmem_rdata;
+        // ── LBU (unsigned byte) ───────────────────────────────────────────────
+        {`WIDTH_BU, 2'b00}: load_data = {24'd0, dmem_rdata[7:0]};
+        {`WIDTH_BU, 2'b01}: load_data = {24'd0, dmem_rdata[15:8]};
+        {`WIDTH_BU, 2'b10}: load_data = {24'd0, dmem_rdata[23:16]};
+        {`WIDTH_BU, 2'b11}: load_data = {24'd0, dmem_rdata[31:24]};
+        // ── LHU (unsigned halfword) ───────────────────────────────────────────
+        {`WIDTH_HU, 2'b00}: load_data = {16'd0, dmem_rdata[15:0]};
+        {`WIDTH_HU, 2'b10}: load_data = {16'd0, dmem_rdata[31:16]};
+        // ── safe default (covers misaligned cases) ────────────────────────────
+        default:            load_data = dmem_rdata;
       endcase
     end
 
