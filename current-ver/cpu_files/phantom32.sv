@@ -172,8 +172,8 @@ module cpu (
     logic        flush_if_id;     // 1 = flush the IF/ID pipeline register
     logic        flush_id_ex;     // 1 = flush the ID/EX pipeline register
     logic        flush_ex_ma;     // 1 = flush the EX/MA pipeline register
-    logic [31:0] nextPC;          // NextPC     value from NextPC MUX
-    logic [31:0] nextPC2;         // NextPC + 2 value from NextPC MUX
+    logic [31:0] next_pc;         // NextPC     value from NextPC MUX
+    logic [31:0] next_pc2;        // NextPC + 2 value from NextPC MUX
 
     // ── IMEM / IF instruction assembly ───────────────────────────────────────
     logic        if_isCompressed;  // Compressed instruction flag
@@ -222,9 +222,10 @@ module cpu (
     logic [31:0] wb_fwdValue;      // forwarded WB Stage MUX value
     logic [31:0] fwd_rs1Value;     // forwarded ALU LHS operand
     logic [31:0] fwd_rs2Value;     // forwarded ALU RHS operand
-    logic [31:0] alu_LHS;          // ALU LHS input value
-    logic [31:0] alu_RHS;          // ALU RHS input value
+    logic [31:0] alu_lhs;          // ALU LHS input value
+    logic [31:0] alu_rhs;          // ALU RHS input value
     logic [31:0] alu_result;       // ALU output result value
+    logic [31:0] ex_dmem_addr;     // dedicated DMEM address (rs1_fwd + imm)
     logic        branch_taken;     // Computed (NOT predicted) branch taken
     logic [31:0] ex_targetAddr;    // branch/jump target address
     /* verilator lint_off UNUSEDSIGNAL */
@@ -250,8 +251,8 @@ module cpu (
 
     // ── MemoryAccess Combinational Registers ─────────────────────────────────
     logic [31:0] load_data;        // load instruction's fetched data
-    logic [3:0]  dmem_be_r;        // per-byte write enable register
-    logic [31:0] dmem_wdata_r;     // store data (byte-lane shifted)
+    logic [3:0]  store_be;         // per-byte write enable register
+    logic [31:0] store_data;       // store data (byte-lane shifted)
 
   // ===========================================================================
   // INTERMEDIATE SIGNAL DECLARATIONS
@@ -261,65 +262,15 @@ module cpu (
   // ===========================================================================
   // PreIF STAGE  ──  NextPC MUX and PC register
   // ===========================================================================
-  // NextPC MUX Priority (highest first):
-  //   trap_en      → mtvec         exception entry
-  //   mret_en      → mepc          return from trap
-  //   branch_flush → target        branch/jump resolved in EX
-  //   stall        → hold r_pc     load-use stall (re-fetch same instruction)
-  //   default      → r_pc + 2/4    sequential advance
+  //   [Phase III] BTB lookup: MAR ← next_pc, output → PredPC into PreIF/IF regs
+  //   [Phase III] PHT index:  XOR(BHR, r_pc) → PHT MAR into PreIF/IF regs
   // ===========================================================================
 
-    assign imem_addr_a  = nextPC;
-    assign imem_addr_b  = nextPC2;
-    assign branch_flush = (id_ex_isBranch && branch_taken) || id_ex_isJump;
-
-    // Pre-calculating ALL possible targets
-    logic [31:0] pc_inc_seq;   assign pc_inc_seq   = if_isCompressed ? r_pc2 : r_pc4;
-    logic [31:0] pc_inc_seq2;  assign pc_inc_seq2  = if_isCompressed ? r_pc4 : r_pc6;
-    logic [31:0] csr_mtvec2;   assign csr_mtvec2   = csr_mtvec       + 32'd2;
-    logic [31:0] csr_mepc2;    assign csr_mepc2    = csr_mepc        + 32'd2;
-    logic [31:0] ex_target2;   assign ex_target2   = ex_targetAddr   + 32'd2;
-
-    // One-Hot selection signal
-    logic [5:0] nextpc_sel;
-    assign nextpc_sel[0] = !resetn;                                                    // Reset (Highest)
-    assign nextpc_sel[1] = resetn &&  trap_en;                                         // TRAP
-    assign nextpc_sel[2] = resetn && !trap_en &&  mret_en;                             // MRET
-    assign nextpc_sel[3] = resetn && !trap_en && !mret_en &&  branch_flush;            // Branch/Jump
-    assign nextpc_sel[4] = resetn && !trap_en && !mret_en && !branch_flush &&  stall;  // Stall
-    assign nextpc_sel[5] = resetn && !trap_en && !mret_en && !branch_flush && !stall;  // Default (Lowest)
-
-    // Parallel NextPC MUX
-    always_comb begin
-      unique case (1'b1)
-        nextpc_sel[0]: nextPC = `RESET_VECTOR;
-        nextpc_sel[1]: nextPC = csr_mtvec;
-        nextpc_sel[2]: nextPC = csr_mepc;
-        nextpc_sel[3]: nextPC = ex_targetAddr;
-        nextpc_sel[4]: nextPC = r_pc;
-        nextpc_sel[5]: nextPC = pc_inc_seq;
-        default:       nextPC = `RESET_VECTOR;
-      endcase
-    end
-
-    // Parallel NextPC + 2 MUX
-    always_comb begin
-      unique case (1'b1)
-        nextpc_sel[0]: nextPC2 = `RESET_VECTOR + 32'd2;
-        nextpc_sel[1]: nextPC2 = csr_mtvec2;
-        nextpc_sel[2]: nextPC2 = csr_mepc2;
-        nextpc_sel[3]: nextPC2 = ex_target2;
-        nextpc_sel[4]: nextPC2 = r_pc2;
-        nextpc_sel[5]: nextPC2 = pc_inc_seq2;
-        default:       nextPC2 = `RESET_VECTOR + 32'd2;
-      endcase
-    end
-
     always_ff @(posedge clk) begin
-      r_pc  <= nextPC;
-      r_pc2 <= nextPC2;
-      r_pc4 <= nextPC2 + 32'd2;
-      r_pc6 <= nextPC2 + 32'd4;
+      r_pc  <= next_pc;
+      r_pc2 <= next_pc2;
+      r_pc4 <= next_pc2 + 32'd2;
+      r_pc6 <= next_pc2 + 32'd4;
     end
 
   // ===========================================================================
@@ -330,11 +281,70 @@ module cpu (
   // ===========================================================================
   // IF STAGE  ──  Instruction assembly and fast decode
   // ===========================================================================
+  // NextPC MUX Priority (highest first):
+  //   trap_en      → mtvec         exception entry
+  //   mret_en      → mepc          return from trap
+  //   branch_flush → target        branch/jump resolved in EX
+  //   stall        → hold r_pc     load-use stall (re-fetch same instruction)
+  //   default      → r_pc + 2/4    sequential advance
+  // ===========================================================================
+
+    // ── IMEM port assignments ────────────────────────────────────────────────
+    assign imem_addr_a = next_pc;
+    assign imem_addr_b = next_pc2;
+
+    // ── Branch flush ─────────────────────────────────────────────────────────
+    assign branch_flush = (id_ex_isBranch && branch_taken) || id_ex_isJump;
+
+    // ── Pre-calculating ALL possible targets ─────────────────────────────────
+    logic [31:0] pc_inc_seq;   assign pc_inc_seq  = if_isCompressed ? r_pc2 : r_pc4;
+    logic [31:0] pc_inc_seq2;  assign pc_inc_seq2 = if_isCompressed ? r_pc4 : r_pc6;
+    logic [31:0] csr_mtvec2;   assign csr_mtvec2  = csr_mtvec     + 32'd2;
+    logic [31:0] csr_mepc2;    assign csr_mepc2   = csr_mepc      + 32'd2;
+    logic [31:0] ex_target2;   assign ex_target2  = ex_targetAddr + 32'd2;
+
+    // ── One-Hot nextpc_sel ───────────────────────────────────────────────────
+    logic [5:0] nextpc_sel;
+    assign nextpc_sel[0] = !resetn;                                                    // Reset  (Highest)
+    assign nextpc_sel[1] =  resetn &&  trap_en;                                        // TRAP
+    assign nextpc_sel[2] =  resetn && !trap_en &&  mret_en;                            // MRET
+    assign nextpc_sel[3] =  resetn && !trap_en && !mret_en &&  branch_flush;           // Branch/Jump
+    assign nextpc_sel[4] =  resetn && !trap_en && !mret_en && !branch_flush &&  stall; // Stall
+    assign nextpc_sel[5] =  resetn && !trap_en && !mret_en && !branch_flush && !stall; // Default (Lowest)
+
+    // ── Parallel NextPC MUX ──────────────────────────────────────────────────
+    always_comb begin
+      unique case (1'b1)
+        nextpc_sel[0]: next_pc = `RESET_VECTOR;
+        nextpc_sel[1]: next_pc = csr_mtvec;
+        nextpc_sel[2]: next_pc = csr_mepc;
+        nextpc_sel[3]: next_pc = ex_targetAddr;
+        nextpc_sel[4]: next_pc = r_pc;
+        nextpc_sel[5]: next_pc = pc_inc_seq;
+        default:       next_pc = `RESET_VECTOR;
+      endcase
+    end
+
+    // ── Parallel NextPC + 2 MUX ──────────────────────────────────────────────
+    always_comb begin
+      unique case (1'b1)
+        nextpc_sel[0]: next_pc2 = `RESET_VECTOR + 32'd2;
+        nextpc_sel[1]: next_pc2 = csr_mtvec2;
+        nextpc_sel[2]: next_pc2 = csr_mepc2;
+        nextpc_sel[3]: next_pc2 = ex_target2;
+        nextpc_sel[4]: next_pc2 = r_pc2;
+        nextpc_sel[5]: next_pc2 = pc_inc_seq2;
+        default:       next_pc2 = `RESET_VECTOR + 32'd2;
+      endcase
+    end
+
+    // ── Instruction assembly ─────────────────────────────────────────────────
     assign if_isCompressed = (imem_data_a[1:0] != 2'b11);
     assign if_instr        =
-       if_isCompressed     ? {16'd0,       imem_data_a}
-      /*not compressed*/   : {imem_data_b, imem_data_a};
+       if_isCompressed   ? {16'd0,       imem_data_a}
+      /* not compressed */: {imem_data_b, imem_data_a};
 
+    // ── fast_decoder ─────────────────────────────────────────────────────────
     fast_decoder u_fd (
       .instrWord     (if_instr),
       .is_compressed (if_isCompressed),
@@ -615,13 +625,17 @@ module cpu (
     end
 
     // ── ALU source muxes ─────────────────────────────────────────────────────
-    assign alu_LHS = id_ex_aluLHS ? id_ex_pc  : fwd_rs1Value;
-    assign alu_RHS = id_ex_aluRHS ? id_ex_imm : fwd_rs2Value;
+    assign alu_lhs = id_ex_aluLHS ? id_ex_pc  : fwd_rs1Value;
+    assign alu_rhs = id_ex_aluRHS ? id_ex_imm : fwd_rs2Value;
+ 
+    // ── Dedicated DMEM address adder ──────────────────────────────────────────
+    // rs1_fwd + imm with no intervening muxes or ALU case statement.
+    assign ex_dmem_addr = fwd_rs1Value + id_ex_imm;
 
     // ── ALU ──────────────────────────────────────────────────────────────────
     alu u_alu (
-      .lhs    (alu_LHS),
-      .rhs    (alu_RHS),
+      .lhs    (alu_lhs),
+      .rhs    (alu_rhs),
       .op     (id_ex_aluOp),
       .result (alu_result)
     );
@@ -827,27 +841,27 @@ module cpu (
     always_comb begin
       unique case ({ex_ma_memWidth, ex_ma_aluResult[1:0]})
         // ── SB (byte) ─────────────────────────────────────────────────────────
-        {`WIDTH_B, 2'b00}: begin dmem_be_r = 4'b0001; dmem_wdata_r = {24'd0, ex_ma_rs2Fwd[7:0]};        end
-        {`WIDTH_B, 2'b01}: begin dmem_be_r = 4'b0010; dmem_wdata_r = {16'd0, ex_ma_rs2Fwd[7:0],  8'd0}; end
-        {`WIDTH_B, 2'b10}: begin dmem_be_r = 4'b0100; dmem_wdata_r = {8'd0,  ex_ma_rs2Fwd[7:0], 16'd0}; end
-        {`WIDTH_B, 2'b11}: begin dmem_be_r = 4'b1000; dmem_wdata_r = {       ex_ma_rs2Fwd[7:0], 24'd0}; end
+        {`WIDTH_B, 2'b00}: begin store_be = 4'b0001; store_data = {24'd0, ex_ma_rs2Fwd[7:0]};        end
+        {`WIDTH_B, 2'b01}: begin store_be = 4'b0010; store_data = {16'd0, ex_ma_rs2Fwd[7:0],  8'd0}; end
+        {`WIDTH_B, 2'b10}: begin store_be = 4'b0100; store_data = {8'd0,  ex_ma_rs2Fwd[7:0], 16'd0}; end
+        {`WIDTH_B, 2'b11}: begin store_be = 4'b1000; store_data = {       ex_ma_rs2Fwd[7:0], 24'd0}; end
         // ── SH (halfword) ─────────────────────────────────────────────────────
-        {`WIDTH_H, 2'b00}: begin dmem_be_r = 4'b0011; dmem_wdata_r = {16'd0, ex_ma_rs2Fwd[15:0]};       end
-        {`WIDTH_H, 2'b10}: begin dmem_be_r = 4'b1100; dmem_wdata_r = {ex_ma_rs2Fwd[15:0], 16'd0};       end
+        {`WIDTH_H, 2'b00}: begin store_be = 4'b0011; store_data = {16'd0, ex_ma_rs2Fwd[15:0]};       end
+        {`WIDTH_H, 2'b10}: begin store_be = 4'b1100; store_data = {ex_ma_rs2Fwd[15:0], 16'd0};       end
         // ── SW (word) ─────────────────────────────────────────────────────────
-        {`WIDTH_W, 2'b00}: begin dmem_be_r = 4'b1111; dmem_wdata_r = ex_ma_rs2Fwd;                       end
+        {`WIDTH_W, 2'b00}: begin store_be = 4'b1111; store_data = ex_ma_rs2Fwd;                       end
         // ── safe default (misaligned stores - trapped before reaching here) ───
-        default:           begin dmem_be_r = 4'b1111; dmem_wdata_r = ex_ma_rs2Fwd;                       end
+        default:           begin store_be = 4'b1111; store_data = ex_ma_rs2Fwd;                       end
       endcase
     end
 
     // ── DMEM port assignments ─────────────────────────────────────────────────
     // dmem_we is gated off when a trap fires: the trapping instruction must not
     // commit a store to memory (precise exception requirement).
-    assign dmem_addr  = ex_ma_aluResult;
+    assign dmem_addr  = ex_dmem_addr;
     assign dmem_we    = ex_ma_memWrite && !trap_en;
-    assign dmem_be    = dmem_be_r;
-    assign dmem_wdata = dmem_wdata_r;
+    assign dmem_be    = store_be;
+    assign dmem_wdata = store_data;
 
   // ===========================================================================
   // MA STAGE
