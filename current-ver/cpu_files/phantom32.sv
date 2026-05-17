@@ -112,7 +112,7 @@ module cpu (
     logic        id_ex_isComp;      // 0 = 32-bit instruction | 1 = 16-bit compressed
     logic [31:0] id_ex_imm;         // Immediate value
     /* verilator lint_off UNUSEDSIGNAL */
-    logic [31:0] id_ex_imm2;        // Immediate + 2
+    logic [31:0] id_ex_imm2;        // unused now; reserved for Phase III branch prediction
     /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] id_ex_instr;       // raw instruction word
 
@@ -136,9 +136,9 @@ module cpu (
     logic        ex_ma_isIllegal;   // illegal instruction flag
     logic [31:0] ex_ma_pc;          // PC of the current instruction in MA
     /* verilator lint_off UNUSEDSIGNAL */
-    logic [31:0] ex_ma_pc2;         // PC + 2 of the current instruction in MA
-    logic [31:0] ex_ma_pc4;         // PC + 4 of the current instruction in MA
-    logic        ex_ma_isComp;      // 0 = 32-bit instruction | 1 = 16-bit compressed
+    logic [31:0] ex_ma_pc2;         // |
+    logic [31:0] ex_ma_pc4;         // |> unused now, reserved for Phase III / Phase V
+    logic        ex_ma_isComp;      // \
     /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] ex_ma_instr;       // raw instruction word
     logic [31:0] ex_ma_linkAddr;    // PC + 2 or PC + 4 (JAL/JALR link)
@@ -825,31 +825,19 @@ module cpu (
     // The byte-enable mask activates only the lanes being written.
     // Write data is placed in the correct lane; unused lanes hold zero.
     always_comb begin
-      dmem_be_r    = 4'b1111;
-      dmem_wdata_r = ex_ma_rs2Fwd;
-      case (ex_ma_memWidth)
-        `WIDTH_B: begin
-          dmem_be_r = 4'b0001 << ex_ma_aluResult[1:0];
-          case (ex_ma_aluResult[1:0])
-            2'b00: dmem_wdata_r = {24'd0, ex_ma_rs2Fwd[7:0]};
-            2'b01: dmem_wdata_r = {16'd0, ex_ma_rs2Fwd[7:0], 8'd0};
-            2'b10: dmem_wdata_r = {8'd0,  ex_ma_rs2Fwd[7:0], 16'd0};
-            2'b11: dmem_wdata_r = {       ex_ma_rs2Fwd[7:0], 24'd0};
-          endcase
-        end
-        `WIDTH_H: begin
-          if (ex_ma_aluResult[1]) begin
-            dmem_be_r    = 4'b1100;
-            dmem_wdata_r = {ex_ma_rs2Fwd[15:0], 16'd0};
-          end else begin
-            dmem_be_r    = 4'b0011;
-            dmem_wdata_r = {16'd0, ex_ma_rs2Fwd[15:0]};
-          end
-        end
-        default:  begin
-          dmem_be_r      = 4'b1111;
-          dmem_wdata_r   = ex_ma_rs2Fwd;
-        end
+      unique case ({ex_ma_memWidth, ex_ma_aluResult[1:0]})
+        // ── SB (byte) ─────────────────────────────────────────────────────────
+        {`WIDTH_B, 2'b00}: begin dmem_be_r = 4'b0001; dmem_wdata_r = {24'd0, ex_ma_rs2Fwd[7:0]};        end
+        {`WIDTH_B, 2'b01}: begin dmem_be_r = 4'b0010; dmem_wdata_r = {16'd0, ex_ma_rs2Fwd[7:0],  8'd0}; end
+        {`WIDTH_B, 2'b10}: begin dmem_be_r = 4'b0100; dmem_wdata_r = {8'd0,  ex_ma_rs2Fwd[7:0], 16'd0}; end
+        {`WIDTH_B, 2'b11}: begin dmem_be_r = 4'b1000; dmem_wdata_r = {       ex_ma_rs2Fwd[7:0], 24'd0}; end
+        // ── SH (halfword) ─────────────────────────────────────────────────────
+        {`WIDTH_H, 2'b00}: begin dmem_be_r = 4'b0011; dmem_wdata_r = {16'd0, ex_ma_rs2Fwd[15:0]};       end
+        {`WIDTH_H, 2'b10}: begin dmem_be_r = 4'b1100; dmem_wdata_r = {ex_ma_rs2Fwd[15:0], 16'd0};       end
+        // ── SW (word) ─────────────────────────────────────────────────────────
+        {`WIDTH_W, 2'b00}: begin dmem_be_r = 4'b1111; dmem_wdata_r = ex_ma_rs2Fwd;                       end
+        // ── safe default (misaligned stores - trapped before reaching here) ───
+        default:           begin dmem_be_r = 4'b1111; dmem_wdata_r = ex_ma_rs2Fwd;                       end
       endcase
     end
 
