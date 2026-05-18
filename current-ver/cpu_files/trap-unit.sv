@@ -25,7 +25,7 @@ module trap_unit (
   // ── MA-stage pipeline register contents ───────────────────────────────────
   input  logic [31:0] ma_pc,          // PC of instruction in MA                (→ mepc)
   input  logic [31:0] ma_instr,       // raw instruction word                   (→ mtval for illegal)
-  input  logic [31:0] ma_alu_result,  // effective address from ALU             (→ mtval for misalign)
+  input  logic [31:0] ma_dmemAddr,    // effective address from ALU             (→ mtval for misalign)
   input  logic        ma_mem_read,    // 1 = instruction is a load
   input  logic        ma_mem_write,   // 1 = instruction is a store
   input  logic [2:0]  ma_mem_width,   // load / store width (`WIDTH_* constants)
@@ -57,13 +57,13 @@ module trap_unit (
   // ===========================================================================
   logic load_misalign;
   assign load_misalign  = ma_mem_read && (
-    ((ma_mem_width == `WIDTH_H || ma_mem_width == `WIDTH_HU) && ma_alu_result[0]) ||
-     (ma_mem_width == `WIDTH_W && |ma_alu_result[1:0])
+    ((ma_mem_width == `WIDTH_H || ma_mem_width == `WIDTH_HU) && ma_dmemAddr[0]) ||
+     (ma_mem_width == `WIDTH_W && |ma_dmemAddr[1:0])
   );
   logic store_misalign;
   assign store_misalign = ma_mem_write && (
-     (ma_mem_width == `WIDTH_H && ma_alu_result[0]) ||
-     (ma_mem_width == `WIDTH_W && |ma_alu_result[1:0])
+     (ma_mem_width == `WIDTH_H &&  ma_dmemAddr[0]) ||
+     (ma_mem_width == `WIDTH_W && |ma_dmemAddr[1:0])
   );
 
 
@@ -108,10 +108,10 @@ module trap_unit (
   // Misalign: offending effective address - required by spec for precise traps
   // ===========================================================================
   assign trap_mtval =
-    ma_is_ebreak   ? ma_pc         :
-    ma_is_illegal  ? ma_instr      :
-    load_misalign  ? ma_alu_result :
-    store_misalign ? ma_alu_result :
+    ma_is_ebreak   ? ma_pc       :
+    ma_is_illegal  ? ma_instr    :
+    load_misalign  ? ma_dmemAddr :
+    store_misalign ? ma_dmemAddr :
     /*no cause*/     32'd0;
 
 endmodule

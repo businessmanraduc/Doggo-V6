@@ -82,8 +82,6 @@ module cpu (
 
     // ── ID/EX ────────────────────────────────────────────────────────────────
     logic [3:0]  id_ex_aluOp;       // ALU opcode
-    logic        id_ex_aluLHS;      // ALU Left-Hand-Side:  0 = rs1 | 1 = PC
-    logic        id_ex_aluRHS;      // ALU Right-Hand-Side: 0 = rs2 | 1 = immediate
     logic        id_ex_isBranch;    // conditional branch flag
     logic [2:0]  id_ex_branchType;  // conditional branch type
     logic        id_ex_isJump;      // jump flag
@@ -118,6 +116,9 @@ module cpu (
 
     // ── EX/MA ────────────────────────────────────────────────────────────────
     logic [31:0] ex_ma_aluResult;   // Result from the ALU unit
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic [31:0] ex_ma_dmemAddr;    // DMEM byte address (rs1_fwd + imm)
+    /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] ex_ma_rs1Fwd;      // forwarded rs1 (CSR RMW source in MA)
     logic [31:0] ex_ma_rs2Fwd;      // forwarded rs2 (store data in MA)
     logic [4:0]  ex_ma_rdIndex;     // rd index (pipelines toward WB)
@@ -187,8 +188,8 @@ module cpu (
 
     // ── control_unit outputs ─────────────────────────────────────────────────
     logic [3:0]  id_aluOp;         // extracted ALU opcode
-    logic        id_aluLHS;        // extracted LHS MUX selector (0 = rs1, 1 = PC)
-    logic        id_aluRHS;        // extracted RHS MUX selector (0 = rs2, 1 = imm)
+    logic        id_aluLHS;        // rs1Data pre-select (0 = rs1, 1 = PC)
+    logic        id_aluRHS;        // rs2Data pre-select (0 = rs2, 1 = imm)
     logic        id_isBranch;      // extracted Conditional Branch flag
     logic [2:0]  id_branchType;    // conditional branch type
     logic        id_isJump;        // extracted jump flag
@@ -475,8 +476,6 @@ module cpu (
     always_ff @(posedge clk) begin
       if (!resetn || flush_id_ex) begin
         id_ex_aluOp      <= `ALU_ADD;
-        id_ex_aluLHS     <= 1'b0;
-        id_ex_aluRHS     <= 1'b0;
         id_ex_isBranch   <= 1'b0;
         id_ex_branchType <= 3'b000;
         id_ex_isJump     <= 1'b0;
@@ -508,8 +507,6 @@ module cpu (
         id_ex_instr      <= `NOP_INSTR;
       end else begin
         id_ex_aluOp      <= id_aluOp;
-        id_ex_aluLHS     <= id_aluLHS;
-        id_ex_aluRHS     <= id_aluRHS;
         id_ex_isBranch   <= id_isBranch;
         id_ex_branchType <= id_branchType;
         id_ex_isJump     <= id_isJump;
@@ -527,8 +524,8 @@ module cpu (
         id_ex_isIllegal  <= id_isIllegal;
         id_ex_regWrite   <= id_regWrite;
         id_ex_wbSel      <= id_wbSel;
-        id_ex_rs1Data    <= rf_rs1Data;
-        id_ex_rs2Data    <= rf_rs2Data;
+        id_ex_rs1Data    <= id_aluLHS ? if_id_pc : rf_rs1Data;
+        id_ex_rs2Data    <= id_aluRHS ? id_imm   : rf_rs2Data;
         id_ex_rs1Index   <= if_id_rs1Index;
         id_ex_rs2Index   <= if_id_rs2Index;
         id_ex_rdIndex    <= if_id_rdIndex;
@@ -625,8 +622,8 @@ module cpu (
     end
 
     // ── ALU source muxes ─────────────────────────────────────────────────────
-    assign alu_lhs = id_ex_aluLHS ? id_ex_pc  : fwd_rs1Value;
-    assign alu_rhs = id_ex_aluRHS ? id_ex_imm : fwd_rs2Value;
+    assign alu_lhs = fwd_rs1Value;
+    assign alu_rhs = fwd_rs2Value;
  
     // ── Dedicated DMEM address adder ──────────────────────────────────────────
     // rs1_fwd + imm with no intervening muxes or ALU case statement.
@@ -677,6 +674,7 @@ module cpu (
     always_ff @(posedge clk) begin
       if (!resetn || flush_ex_ma) begin
         ex_ma_aluResult  <= 32'd0;
+        ex_ma_dmemAddr   <= 32'd0;
         ex_ma_rs1Fwd     <= 32'd0;
         ex_ma_rs2Fwd     <= 32'd0;
         ex_ma_rdIndex    <= 5'd0;
@@ -703,6 +701,7 @@ module cpu (
         ex_ma_csrWrGuard <= 1'b0;
       end else begin
         ex_ma_aluResult  <= alu_result;
+        ex_ma_dmemAddr   <= ex_dmem_addr;
         ex_ma_rs1Fwd     <= fwd_rs1Value;
         ex_ma_rs2Fwd     <= fwd_rs2Value;
         ex_ma_rdIndex    <= id_ex_rdIndex;
@@ -742,7 +741,7 @@ module cpu (
     trap_unit u_trap (
       .ma_pc         (ex_ma_pc),
       .ma_instr      (ex_ma_instr),
-      .ma_alu_result (ex_ma_aluResult),
+      .ma_dmemAddr   (ex_ma_dmemAddr),
       .ma_mem_read   (ex_ma_memRead),
       .ma_mem_write  (ex_ma_memWrite),
       .ma_mem_width  (ex_ma_memWidth),
@@ -760,14 +759,6 @@ module cpu (
     // ── CSR Read-Modify-Write ────────────────────────────────────────────────
     // csr_rdDataRaw is the raw flip-flop value, free of write-before-read
     // forwarding, so csr_wrData does not feed back into csr_rdDataRaw.
-    //
-    // CSRRxI variants: fast_decoder sets rs1 to x0, so ex_ma_rs1Fwd = 0.
-    //   The real 5-bit zimm lives in ex_ma_instr[19:15] and is zero-extended.
-    //   csr_rs1Value selects zimm over the (zero) forwarded rs1 for the RMW data.
-    //
-    // Write guard (ex_ma_csrWrGuard): pre-computed in EX from the register index
-    //   and zimm field per spec — CSRRS/CSRRC suppress the write only when
-    //   rs1 = x0 (reg form) or zimm = 0 (imm form); CSRRW always writes.
     assign        csr_zimm     = {27'd0, ex_ma_instr[19:15]};
     assign        csr_rs1Value = ex_ma_csrUseImm ? csr_zimm : ex_ma_rs1Fwd;
     logic  [31:0] csr_wrDataRS;
@@ -811,7 +802,7 @@ module cpu (
     // DMEM returns a full 32-bit word.  The two low address bits select which
     // byte or halfword lane to extract, which is then sign/zero-extended.
     always_comb begin
-      unique case ({ex_ma_memWidth, ex_ma_aluResult[1:0]})
+      unique case ({ex_ma_memWidth, ex_ma_dmemAddr[1:0]})
         // ── LB  (signed byte) ─────────────────────────────────────────────────
         {`WIDTH_B,  2'b00}: load_data = {{24{dmem_rdata[7]}},  dmem_rdata[7:0]};
         {`WIDTH_B,  2'b01}: load_data = {{24{dmem_rdata[15]}}, dmem_rdata[15:8]};
@@ -839,7 +830,7 @@ module cpu (
     // The byte-enable mask activates only the lanes being written.
     // Write data is placed in the correct lane; unused lanes hold zero.
     always_comb begin
-      unique case ({ex_ma_memWidth, ex_ma_aluResult[1:0]})
+      unique case ({ex_ma_memWidth, ex_ma_dmemAddr[1:0]})
         // ── SB (byte) ─────────────────────────────────────────────────────────
         {`WIDTH_B, 2'b00}: begin store_be = 4'b0001; store_data = {24'd0, ex_ma_rs2Fwd[7:0]};        end
         {`WIDTH_B, 2'b01}: begin store_be = 4'b0010; store_data = {16'd0, ex_ma_rs2Fwd[7:0],  8'd0}; end

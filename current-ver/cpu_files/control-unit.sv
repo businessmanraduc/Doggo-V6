@@ -102,7 +102,7 @@ module control_unit (
               mem_width = `WIDTH_W; mem_read  = 1'b1; wb_sel    = 2'b01;
             end
             `CF3_C_SW:       begin      // mem32[rs1' + uimm5] = rs2'
-              alu_op    = `ALU_ADD; alu_src_b = 1'b1; mem_write = 1'b1;
+              alu_op    = `ALU_ADD; alu_src_b = 1'b0; mem_write = 1'b1;
               mem_width = `WIDTH_W;
             end
             default: is_illegal = 1'b1; // all other cfunc3 reserved
@@ -203,7 +203,7 @@ module control_unit (
               end
             end
             `CF3_C_SWSP:      begin     // mem32[sp + uimm6] = rs2
-              alu_op    = `ALU_ADD; alu_src_b = 1'b1; mem_write = 1'b1;
+              alu_op    = `ALU_ADD; alu_src_b = 1'b0; mem_write = 1'b1;
               mem_width = `WIDTH_W;
             end
             default: is_illegal = 1'b1;
@@ -256,7 +256,7 @@ module control_unit (
             `OP_STORE:   begin
               case (func3)
                 `F3_SB, `F3_SH, `F3_SW: begin
-                  alu_op = `ALU_ADD; alu_src_b = 1'b1; mem_write = 1'b1;
+                  alu_op = `ALU_ADD; alu_src_b = 1'b0; mem_write = 1'b1;
                   mem_width = func3;
                 end
                 default: is_illegal = 1'b1;
