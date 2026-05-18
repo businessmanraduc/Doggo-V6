@@ -1,7 +1,10 @@
 `include "isa.vh"
 // =============================================================================
-// PHANTOM-32  ──  CPU Top Level  (6-Stage Pipelined RV32IC Core)
+// PHANTOM-32  ──  Phantom Core  (6-Stage Pipelined RV32IC Execution Core)
 // =============================================================================
+// Single execution pipeline - instantiated by cpu.sv which adds caches and
+// the memory bus. tb_core.sv instantiates this module directly for compliance
+// simulation using behavioural memory models.
 // Complete PHANTOM-32 pipeline:
 //
 //   PreIF → IF → ID → EX → MA → WB
@@ -40,7 +43,7 @@
 //   If imem_data_a[1:0] = 2'b11 the instruction is 32-bit and both halves
 //   are concatenated; otherwise only imem_data_a is used (16-bit compressed).
 // =============================================================================
-module cpu (
+module phantom_core (
   input  logic        clk,
   input  logic        resetn,          // active-low synchronous reset
  
@@ -51,7 +54,8 @@ module cpu (
   input  logic [15:0] imem_data_b,     // halfword at PC + 2
  
   // ── Data memory ────────────────────────────────────────────────────────────
-  output logic [31:0] dmem_addr,       // byte address
+  output logic [31:0] dmem_raddr,      // read address  (EX    -> SDPB Port B)
+  output logic [31:0] dmem_waddr,      // write address (EX/MA -> SDPB Port A)
   output logic [31:0] dmem_wdata,      // store data (byte-lane shifted)
   output logic        dmem_we,         // write enable (gated off on trap)
   output logic [3:0]  dmem_be,         // per-byte write enables
@@ -849,7 +853,8 @@ module cpu (
     // ── DMEM port assignments ─────────────────────────────────────────────────
     // dmem_we is gated off when a trap fires: the trapping instruction must not
     // commit a store to memory (precise exception requirement).
-    assign dmem_addr  = ex_dmem_addr;
+    assign dmem_raddr = ex_dmem_addr;
+    assign dmem_waddr = ex_ma_dmemAddr;
     assign dmem_we    = ex_ma_memWrite && !trap_en;
     assign dmem_be    = store_be;
     assign dmem_wdata = store_data;

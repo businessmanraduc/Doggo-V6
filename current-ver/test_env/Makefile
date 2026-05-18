@@ -1,5 +1,5 @@
-TOP_MODULE = tb_cpu
-SV_FILES = phantom32.sv branch-eval.sv fast-decode.sv trap-unit.sv \
+TOP_MODULE = tb_core
+SV_FILES = phantom-core.sv branch-eval.sv fast-decode.sv trap-unit.sv \
            csr-regfile.sv control-unit.sv imm-generator.sv \
            forwarding-unit.sv hazard-unit.sv regfile.sv \
            alu.sv branch-target.sv
@@ -14,8 +14,8 @@ compile:
 	riscv32-none-elf-objcopy -O verilog program.elf program.hex
 	cp ./../cpu_files/*.sv   ./
 	cp ./../cpu_files/isa.vh ./
-	$(VERILATOR) $(V_FLAGS) $(SV_FILES) tb_cpu.sv --exe sim_main.cpp -o Vsim
-	$(MAKE) -C obj_dir -f Vtb_cpu.mk
+	$(VERILATOR) $(V_FLAGS) $(SV_FILES) tb_core.sv --exe sim_main.cpp -o Vsim
+	$(MAKE) -C obj_dir -f Vtb_core.mk
 
 run: compile
 	./obj_dir/Vsim

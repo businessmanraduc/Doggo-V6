@@ -1,10 +1,10 @@
-#include "Vtb_cpu.h"
+#include "Vtb_core.h"
 #include "verilated.h"
 #include "verilated_vcd_c.h"
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
-    Vtb_cpu* top = new Vtb_cpu;
+    Vtb_core* top = new Vtb_core;
 
     Verilated::traceEverOn(true);
     VerilatedVcdC* tfp = new VerilatedVcdC;
