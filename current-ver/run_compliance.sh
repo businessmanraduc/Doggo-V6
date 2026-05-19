@@ -191,6 +191,6 @@ else
   echo ""
   echo "All tests passed! :D"
   echo ""
-  cd "$TEST_ENV" && make clean && cd ..
+  # cd "$TEST_ENV" && make clean && cd ..
   exit 0
 fi
