@@ -1,23 +1,37 @@
 `include "isa.vh"
 // =============================================================================
-// PHANTOM-32  ──  CPU  (Core + L1 Cache + Memory Bus)
+// PHANTOM-32  ──  CPU  (Core + IMEM/DMEM BSRAMs + Peripheral Bus)
 // =============================================================================
-// Wraps phantom_core with the L1 instruction and data memories/caches and
-// exposes a clean external memory bus for the SoC (soc.sv) to connect to
-// SDRAM and peripherals.
+// Wraps phantom_core with behavioral BSRAM models that Yosys infers into ECP5
+// EBR blocks, and exposes a peripheral bus for soc.sv to attach peripherals.
 //
-// Phase III bring-up: IMEM and DMEM are Gowin BSRAM primitives.
-//   IMEM: DPB  - true dual-port, both ports read, 16-bit × 4096
-//   DMEM: SDPB - semi-dual-port, 4 × 8-bit banks for byte-enable writes
-//               Port B (read)  ← dmem_rd_addr = ex_dmem_addr (EX combinational)
-//               Port A (write) ← dmem_wr_addr = ex_ma_dmemAddr (EX/MA register)
+//   IMEM: two independent 16-bit × 4096 arrays, one per read port.
+//         Splitting avoids the Yosys same-clock dual-port DP16KD inference
+//         limitation. Each array infers as 4 × DP16KD = 8 blocks total.
+//         Initialized from imem.hex (16-bit halfword hex, see programs/).
+//
+//   DMEM: one 32-bit × 1024 array with byte-enable write granularity.
+//         Infers as PDPW16KD (pseudo dual-port: one write, one read port).
+//         Not initialized - DMEM starts undefined (program must initialize).
+//
+// Read timing (both IMEM and DMEM):
+//   Address presented in stage N → registered at clock edge → data valid in
+//   stage N+1. 1-cycle latency
+//
+// Address decode (MSB):
+//   dmem_wr_addr[31] == 0  →  BSRAM (DMEM 0x0000–0x0FFF)
+//   dmem_wr_addr[31] == 1  →  peripheral bus (UART @ 0x80002000, CLINT, ...)
+//
+// The gate on DMEM write enable is necessary for correctness: without it, a
+// store to 0x80002000 would alias onto DMEM word 0 (both share addr[11:2]=0).
 //
 // Future phases (III+):
-//   - SDRAM AXI/AHB bus port (replaces direct BSRAM once cache is added)
+//   - SDRAM AXI/AHB bus port (replaces BSRAM once D-cache is added)
 //   - Interrupt inputs (mtime_irq, msip from CLINT)
-//   - D-Cache and I-Cache wrappers around the BSRAM primitives
+//   - I-Cache and D-Cache wrappers around the inferred BSRAM arrays
 //   - MMU / TLB
 // =============================================================================
+
 
 module cpu (
   input  logic clk,
@@ -31,9 +45,6 @@ module cpu (
   output logic        periph_we,    // write enable
   output logic [3:0]  periph_be,    // byte enables
   input  logic [31:0] periph_rdata  // read data from soc peripheral decode
-
-  // ── Phase III+: external bus and interrupt ports go here ───────────────────
-  // e.g. AXI4 master for SDRAM, mtime_irq from CLINT, etc.
 );
 
   // ===========================================================================
@@ -50,9 +61,10 @@ module cpu (
     logic [15:0] imem_data_a;   // Port A read data (valid 1 cycle after address)
     logic [15:0] imem_data_b;   // Port B read data
 
-    // ── DMEM ─────────────────────────────────────────────────────────────────
-    // Only bits [11:2] reach the SDPB address port. Bits [1:0] are the byte offset
-    // (SDPB is word-addressed); bits [31:12] are above the 4 KB DMEM window.
+    // ── DMEM ───────────────────────────────────────────────────────────────────
+    // dmem_rd_addr bits [31:12] and [1:0] are not forwarded to the BSRAM address
+    // ([11:2] only). Upper bits exceed the 4 KB DMEM window; bits [1:0] are
+    // byte-offset bits that the word-addressed BSRAM ignores.
     /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] dmem_rd_addr;  // Read  address (ex_dmem_addr,      combinational EX)
     logic [31:0] dmem_wr_addr;  // Write address (ex_ma_dmemAddr,    registered EX/MA)
@@ -65,7 +77,7 @@ module cpu (
 
     // ── Address decode ───────────────────────────────────────────────────────
     // bit [31] == 1 → peripheral space. Gates BSRAM write and selects read data.
-    logic addr_is_periph;
+    logic  addr_is_periph;
     assign addr_is_periph = dmem_wr_addr[31];
  
     // ── Peripheral bus outputs ───────────────────────────────────────────────
@@ -107,87 +119,72 @@ module cpu (
  
 
   // ===========================================================================
-  // IMEM  ──  Gowin DPB, true dual-port read, 16-bit × 4096
+  // IMEM  ──  ECP5 EBR, dual read port, 16-bit × 4096 (8 KB total)
   // ===========================================================================
-  // Both ports are read-only (WREA=0, WREB=0).
-  // READ_MODE=0 (bypass) → 1-cycle latency: address presented in IF,
-  // MAR latches at PreIF/IF clock edge, data valid combinationally in IF+1.
-  // Initialised from program.mif at synthesis time via INIT_FILE parameter.
+  // Two independent 16-bit × 4096 arrays so each read port infers its own
+  // group of 4 × DP16KD blocks. This avoids the Yosys inference limitation
+  // where same-clock dual-port reads from a single array may fall back to
+  // flip-flop / LUT-RAM instead of EBR.
+  //
+  // READ timing: address presented in IF → registered at IF→ID clock edge →
+  //   data valid from start of ID stage (1-cycle latency).
+  //
+  // INITIALIZATION: $readmemh reads imem.hex, a 16-bit halfword hex file where
+  //   each line holds one 16-bit entry (little-endian halfword).
+  //   Generate from a compiled ELF using programs/bin2imem_hex.py.
   // ===========================================================================
-    DPB #(
-      .READ_MODE0  (1'b0),
-      .READ_MODE1  (1'b0),
-      .WRITE_MODE0 (2'b00),
-      .WRITE_MODE1 (2'b00),
-      .BIT_WIDTH_0 (16),
-      .BIT_WIDTH_1 (16),
-      .DEPTH_0     (4096),
-      .DEPTH_1     (4096),
-      .RESET_MODE  ("SYNC"),
-      .INIT_FILE   ("program.mif")   // convert hex → mif for Gowin tools
-    ) u_imem (
-      .CLKA  (clk), .CEA  (1'b1), .OCEA  (1'b1), .RESETA(1'b0), .WREA(1'b0),
-      .ADA   (imem_addr_a[12:1]),
-      .DIA   (16'd0),
-      .DOA   (imem_data_a),
-      .CLKB  (clk), .CEB  (1'b1), .OCEB  (1'b1), .RESETB(1'b0), .WREB(1'b0),
-      .ADB   (imem_addr_b[12:1]),
-      .DIB   (16'd0),
-      .DOB   (imem_data_b)
-    );
+    (* ram_style = "block" *) logic [15:0] imem_a [0:4095];
+    (* ram_syyle = "block" *) logic [15:0] imem_b [0:4095];
+
+    initial begin
+      $readmemh("imem.hex", imem_a);
+      $readmemh("imem.hex", imem_b);
+    end
+
+    always_ff @(posedge clk) begin
+      imem_data_a <= imem_a[imem_addr_a[12:1]];
+      imem_data_b <= imem_b[imem_addr_b[12:1]];
+    end
   // ===========================================================================
   // IMEM
   // ===========================================================================
 
 
   // ===========================================================================
-  // DMEM  ──  4 × Gowin SDPB, semi-dual-port, 8-bit × 1024 per lane
+  // DMEM  ──  ECP5 EBR, pseudo-dual-port, 32-bit × 1024 (4 KB)
   // ===========================================================================
-  // Port B (read):  ADB = dmem_rd_addr (ex_dmem_addr, EX combinational)
-  //   MAR latches at EX→MA clock edge. DOB valid combinationally in MA.
+  // Separate write and read ports with different addresses infer cleanly as
+  // PDPW16KD (Pseudo Dual-Port Wide 16K) in Yosys synth_ecp5.
   //
-  // Port A (write): ADA = dmem_wr_addr (ex_ma_dmemAddr, EX/MA register)
-  //   Stable throughout MA. Write committed at MA→WB clock edge.
-  //   WEA[i] = dmem_be[i] && dmem_we && !addr_is_periph
+  // Write port (Port A): address = dmem_wr_addr (ex_ma_dmemAddr, EX/MA register)
+  //   Stable throughout MA stage. Write committed at MA→WB clock edge.
+  //   Byte-enable granularity via four conditional writes to 8-bit slices.
   //
-  // Four 8-bit SDPB instances give full byte-enable granularity:
-  //   lane 0 → dmem_rdata[7:0]   / dmem_wdata[7:0]   / dmem_be[0]
-  //   lane 1 → dmem_rdata[15:8]  / dmem_wdata[15:8]  / dmem_be[1]
-  //   lane 2 → dmem_rdata[23:16] / dmem_wdata[23:16] / dmem_be[2]
-  //   lane 3 → dmem_rdata[31:24] / dmem_wdata[31:24] / dmem_be[3]
+  // Read port (Port B): address = dmem_rd_addr (ex_dmem_addr, EX combinational)
+  //   Registered at EX→MA clock edge. bsram_rdata valid from start of MA.
   //
-  // READ_MODE=0 (bypass, no output register) → 1-cycle read latency.
+  // Known limitation: a store immediately followed by a load to the same
+  // address reads the pre-write value (read-before-write). Insert at least
+  // one instruction between a store and a dependent load to the same address.
   // ===========================================================================
-    genvar i;
-    generate
-      for (i = 0; i < 4; i++) begin : dmem_lane
-        SDPB #(
-          .READ_MODE   (1'b0),
-          .BIT_WIDTH_0 (8),
-          .BIT_WIDTH_1 (8),
-          .DEPTH       (1024),
-          .RESET_MODE  ("SYNC")
-        ) u_dmem_byte (
-          // ── Port A - write ─────────────────────────────────────────────────
-          .CLKA   (clk),
-          .CEA    (1'b1),
-          .RESETA (1'b0),
-          .WREA   (dmem_be[i] && dmem_we && !addr_is_periph),
-          .ADA    (dmem_wr_addr[11:2]),
-          .DIA    (dmem_wdata[i*8 +: 8]),
-          // ── Port B - read ──────────────────────────────────────────────────
-          .CLKB   (clk),
-          .CEB    (1'b1),
-          .OCEB   (1'b1),
-          .RESETB (1'b0),
-          .ADB    (dmem_rd_addr[11:2]),
-          .DOB    (bsram_rdata[i*8 +: 8])
-        );
+    (* ram_style = "block" *) logic [31:0] dmem_mem [0:1023];
+
+    always_ff @(posedge clk) begin
+      if (dmem_we && !addr_is_periph) begin
+        if (dmem_be[0]) dmem_mem[dmem_wr_addr[11:2]][7:0]   <= dmem_wdata[7:0];
+        if (dmem_be[1]) dmem_mem[dmem_wr_addr[11:2]][15:8]  <= dmem_wdata[15:8];
+        if (dmem_be[2]) dmem_mem[dmem_wr_addr[11:2]][23:16] <= dmem_wdata[23:16];
+        if (dmem_be[3]) dmem_mem[dmem_wr_addr[11:2]][31:24] <= dmem_wdata[31:24];
       end
-    endgenerate
+    end
+
+    always_ff @(posedge clk) begin
+      bsram_rdata <= dmem_mem[dmem_rd_addr[11:2]];
+    end
   // ===========================================================================
   // DMEM
   // ===========================================================================
+
 
 endmodule
 

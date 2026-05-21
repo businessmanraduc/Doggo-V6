@@ -1,55 +1,83 @@
 // =============================================================================
-// PHANTOM-32  ──  SoC Top-Level  (Gowin GW2AR-18, Tang Nano 20K)
+// PHANTOM-32  ──  SoC Top-Level  (Lattice ECP5, ULX3S 85K)
 // =============================================================================
-// FPGA top-level. Instantiates the rPLL, reset sequencer, cpu, and the first
-// peripheral: a minimal UART TX stub for Phase III bring-up.
+// FPGA top-level. Instantiates the EHXPLLL PLL, reset sequencer, cpu, and the
+// first peripheral: a minimal UART TX stub for Phase III bring-up.
 //
 // Peripheral memory map (0x8000_xxxx space):
 //   0x8000_2000  UART TX data register (write byte → transmit, 115200 8-N-1)
 //
 // Phase III+ extensions:
 //   0x8000_3000  CLINT (mtime/mtimecmp, machine timer interrupt)
-//   0x8000_2000  UART  with TX FIFO + status / RX path
-//   SDRAM controller   (AXI4 → GW2AR-18 embedded 64 Mbit SDRAM)
+//   0x8000_2000  UART with TX FIFO + status / RX path
+//   SDRAM controller   (AXI4 → ULX3S 32 MB external SDRAM)
 // =============================================================================
 
 module soc (
-  input  logic clk_27,   // 27 MHz board crystal oscillator (Tang Nano 20K)
+  input  logic clk_25,   // 25 MHz board crystal oscillator (ULX3S)
   input  logic resetn,   // active-low board reset button
   output logic uart_tx   // UART serial output pin (115200 8-N-1)
 );
-
+ 
   // ===========================================================================
-  // rPLL  ──  27 MHz → ~50.625 MHz
+  // EHXPLLL  ──  25 MHz → 50 MHz
+  // ===========================================================================
+  // Target: 50 MHz cpu_clk from 25 MHz board crystal.
   // ===========================================================================
     logic cpu_clk;
     logic pll_lock;
 
-    rPLL #(
-      .FCLKIN    ("27"),
-      .IDIV_SEL  (0),
-      .FBDIV_SEL (14),
-      .ODIV_SEL  (16),
-      .DEVICE    ("GW2AR-18C")
+    /* verilator lint_off PINCONNECTEMPTY */
+    EHXPLLL #(
+      .PLLRST_ENA      ("DISABLED"),
+      .INTFB_WAKE      ("DISABLED"),
+      .STDBY_ENABLE    ("DISABLED"),
+      .DPHASE_SOURCE   ("DISABLED"),
+      .OUTDIVIDER_MUXA ("DIVA"),
+      .OUTDIVIDER_MUXB ("DIVB"),
+      .OUTDIVIDER_MUXC ("DIVC"),
+      .OUTDIVIDER_MUXD ("DIVD"),
+      .CLKI_DIV        (1),
+      .CLKOP_ENABLE    ("ENABLED"),
+      .CLKOP_DIV       (12),
+      .CLKOP_CPHASE    (5),
+      .CLKOP_FPHASE    (0),
+      .CLKOS_ENABLE    ("DISABLED"),
+      .CLKOS2_ENABLE   ("DISABLED"),
+      .CLKOS3_ENABLE   ("DISABLED"),
+      .FEEDBK_PATH     ("CLKOP"),
+      .CLKFB_DIV       (24)
     ) u_pll (
-      .CLKIN   (clk_27),
-      .CLKOUT  (cpu_clk),
-      .LOCK    (pll_lock),
-      // ── Static tie-offs for unused PLL control ports ───────────────────────
-      .RESET   (1'b0),
-      .RESET_P (1'b0),
-      .CLKFB   (1'b0),
-      .FBDSEL  (6'd0),
-      .IDSEL   (6'd0),
-      .ODSEL   (6'd0),
-      .PSDA    (4'd0),
-      .DUTYDA  (4'd0),
-      .FDLY    (4'd0)
+      .CLKI        (clk_25),
+      .CLKFB       (cpu_clk),   // internal feedback from CLKOP output
+      .CLKOP       (cpu_clk),
+      .LOCK        (pll_lock),
+      // ── Unused secondary clock outputs ─────────────────────────────────────
+      .CLKOS       (),
+      .CLKOS2      (),
+      .CLKOS3      (),
+      .INTLOCK     (),
+      .REFCLK      (),
+      .CLKINTFB    (),
+      // ── Static tie-offs for unused control ports ───────────────────────────
+      .RST         (1'b0),
+      .STDBY       (1'b0),
+      .PHASESEL0   (1'b0),
+      .PHASESEL1   (1'b0),
+      .PHASEDIR    (1'b1),
+      .PHASESTEP   (1'b1),
+      .PHASELOADREG(1'b1),
+      .PLLWAKESYNC (1'b0),
+      .ENCLKOP     (1'b0),
+      .ENCLKOS     (1'b0),
+      .ENCLKOS2    (1'b0),
+      .ENCLKOS3    (1'b0)
     );
+    /* verilator lint_on  PINCONNECTEMPTY */
   // ===========================================================================
-  // rPLL  ──  27 MHz → ~50.625 MHz
+  // EHXPLLL
   // ===========================================================================
-
+ 
 
   // ===========================================================================
   // RESET SEQUENCER
@@ -135,14 +163,14 @@ module soc (
   // UART TX  ──  115200 8-N-1 transmitter
   // ===========================================================================
   // CLKS_PER_BIT = round(cpu_clk / 115200).
-  // At 50.625 MHz: 50_625_000 / 115_200 ≈ 440. Adjust after PLL is verified.
+  // At 50.0 MHz: 50_000_000 / 115_200 ≈ 434.
   // ===========================================================================
     /* verilator lint_off UNUSEDSIGNAL */
     logic uart_tx_busy;   // reserved: future UART driver / flow control
     /* verilator lint_on  UNUSEDSIGNAL */
 
     uart_tx #(
-      .CLKS_PER_BIT (440)
+      .CLKS_PER_BIT (434)
     ) u_uart_tx (
       .clk      (cpu_clk),
       .resetn   (cpu_resetn),
