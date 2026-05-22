@@ -25,6 +25,28 @@
 //     PC ← mtvec (trap) or mepc (MRET).
 //     MA/WB reg_write suppressed for the trapping instruction itself.
 //
+// ── Branch prediction (gshare, pipelined) ────────────────────────────────────
+//   PHT: 8192 × 2-bit saturating counters (1 EBR block).
+//     Index = BHR[12:0] XOR r_pc[13:1]  (computed in PreIF, MAR latches at edge)
+//     Output available combinationally in IF (1-cycle BSRAM read latency).
+//
+//   BTB: 512 × 32-bit target addresses (1 EBR block).
+//     MAR ← next_pc[9:1] at each clock edge.
+//     Output = predicted target for r_pc, available combinationally in IF.
+//
+//   BHR: 13-bit shift register.  Speculatively updated in IF by "join"
+//     (shift left, insert prediction bit).  Reset to 0 on branch_miss.
+//
+//   Prediction decision ("comb"): pred_taken = pht_rdata[1] (PHT MSB).
+//     If pred_taken: next_pc = r_predpc (BTB target), else sequential.
+//
+//   Misprediction detection ("branch_miss") in MA:
+//     Compares actual taken/target against what was predicted.
+//     Flushes 3 stages; restores PC to TruePC and BHR to 0.
+//
+//   PHT written in MA with 2-bit saturating counter update (branches only).
+//   BTB written in MA with actual target on any taken branch/jump.
+//
 // ── CSR old-value read ───────────────────────────────────────────────────────
 //   The CSR register file is READ in MA stage (rd_addr = ex_ma_csrIndex).
 //   csr_regfile exposes two combinational outputs for the same rd_addr:
@@ -62,6 +84,25 @@ module phantom_core (
   input  logic [31:0] dmem_rdata       // load data (full 32-bit word)
 );
 
+  // ===========================================================================
+  // BRANCH PREDICTOR DIMENSIONS & BSRAM ARRAYS
+  // ===========================================================================
+  // PHT: 8192 × 2-bit saturating counters.  Yosys infers one DP16KD EBR block.
+  // BTB: 512  × 32-bit target addresses.    Yosys infers one DP16KD EBR block.
+  // Both initialize to 0 (predict not-taken / target=0) on FPGA power-up.
+  // ===========================================================================
+    localparam integer PHT_DEPTH  = 8192; // 2^13 PHT entries (2-bit counters)
+    localparam integer PHT_IDX_W  = 13;
+    localparam integer BTB_DEPTH  = 512;  // 2^9  BTB entries (32-bit targets)
+    localparam integer BTB_IDX_W  = 9;
+    localparam integer BHR_W      = 13;
+
+    (* ram_style = "block" *) logic [1:0]  pht [0:PHT_DEPTH - 1];
+    (* ram_style = "block" *) logic [31:0] btb [0:BTB_DEPTH - 1];
+  // ===========================================================================
+  // BRANCH PREDICTOR DIMENSIONS & BSRAM ARRAYS
+  // ===========================================================================
+ 
 
   // ===========================================================================
   // PIPELINE REGISTER STORAGE
@@ -72,6 +113,11 @@ module phantom_core (
     logic [31:0] r_pc2;             // Main ProgramCounter register (+2)
     logic [31:0] r_pc4;             // Main ProgramCounter register (+4)
     logic [31:0] r_pc6;             // Main ProgramCounter register (+6)
+    // ── Branch predictor PreIF/IF registers ──────────────────────────────────
+    logic [31:0]      r_predpc;     // BTB predicted target for r_pc
+    logic [31:0]      r_predpc2;    // r_predpc + 2
+    logic             r_predTaken;  // 1 = prediction was taken for r_pc
+    logic [BHR_W-1:0] r_bhr;        // Branch History Register (speculative)
 
     // ── IF/ID ────────────────────────────────────────────────────────────────
     logic [31:0] if_id_instr;       // assembled instruction word
@@ -83,6 +129,11 @@ module phantom_core (
     logic [4:0]  if_id_rs2Index;    // rs2 index (from fast_decoder)
     logic [4:0]  if_id_rdIndex;     // rd  index (from fast_decoder, for hazard unit)
     logic        if_id_isLoad;      // 1 = load  (from fast_decoder, for hazard unit)
+    // ── Branch predictor IF/ID registers ─────────────────────────────────────
+    logic [31:0]          if_id_predpc;     // propagate predicted target to MA-stage
+    logic                 if_id_predTaken;  // propagate prediction bit   to MA-stage
+    logic [1:0]           if_id_phtOld;     // PHT counter value at prediction time
+    logic [PHT_IDX_W-1:0] if_id_phtIdx;     // PHT index used for this prediction
 
     // ── ID/EX ────────────────────────────────────────────────────────────────
     logic [3:0]  id_ex_aluOp;       // ALU opcode
@@ -113,16 +164,17 @@ module phantom_core (
     logic [31:0] id_ex_pc4;         // PC + 4 of the current instruction in EX
     logic        id_ex_isComp;      // 0 = 32-bit instruction | 1 = 16-bit compressed
     logic [31:0] id_ex_imm;         // Immediate value
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic [31:0] id_ex_imm2;        // unused now; reserved for Phase III branch prediction
-    /* verilator lint_on UNUSEDSIGNAL */
+    logic [31:0] id_ex_imm2;        // imm + 2, used for TakenPC_2 = ex_targetAddr + 2
     logic [31:0] id_ex_instr;       // raw instruction word
+    // ── Branch predictor ID/EX registers ─────────────────────────────────────
+    logic [31:0]          id_ex_predpc;     // propagate predicted target to MA-stage
+    logic                 id_ex_predTaken;  // propagate prediction bit   to MA-stage
+    logic [1:0]           id_ex_phtOld;     // PHT counter value at prediction time
+    logic [PHT_IDX_W-1:0] id_ex_phtIdx;     // PHT index used for this prediction
 
     // ── EX/MA ────────────────────────────────────────────────────────────────
     logic [31:0] ex_ma_aluResult;   // Result from the ALU unit
-    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] ex_ma_dmemAddr;    // DMEM byte address (rs1_fwd + imm)
-    /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] ex_ma_rs1Fwd;      // forwarded rs1 (CSR RMW source in MA)
     logic [31:0] ex_ma_rs2Fwd;      // forwarded rs2 (store data in MA)
     logic [4:0]  ex_ma_rdIndex;     // rd index (pipelines toward WB)
@@ -140,15 +192,22 @@ module phantom_core (
     logic        ex_ma_isMRET;      // MRET    instruction flag
     logic        ex_ma_isIllegal;   // illegal instruction flag
     logic [31:0] ex_ma_pc;          // PC of the current instruction in MA
-    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] ex_ma_pc2;         // |
-    logic [31:0] ex_ma_pc4;         // |> unused now, reserved for Phase III / Phase V
+    logic [31:0] ex_ma_pc4;         // |> used for BelowPC computation/selector
     logic        ex_ma_isComp;      // \
-    /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] ex_ma_instr;       // raw instruction word
     logic [31:0] ex_ma_linkAddr;    // PC + 2 or PC + 4 (JAL/JALR link)
     logic        ex_ma_rdNonZero;   // 1 = ex_ma_rdIndex != 5'd0
     logic        ex_ma_csrWrGuard;  // 1 = csr write is allowed
+    // ── Branch predictor EX/MA registers ─────────────────────────────────────
+    logic [31:0]          ex_ma_predpc;      // what target did the predictor give?
+    logic                 ex_ma_predTaken;   // was prediction taken for this instr?
+    logic [1:0]           ex_ma_phtOld;      // old PHT counter (for saturating update)
+    logic [PHT_IDX_W-1:0] ex_ma_phtIdx;      // PHT write-back index
+    logic [31:0]          ex_ma_targetAddr;  // actual branch/jump target (for TruePC)
+    logic                 ex_ma_branchTaken; // actual taken result from branch_eval
+    logic                 ex_ma_isBranch;    // 1 = conditional branch instruction
+    logic                 ex_ma_isJump;      // 1 = unconditional jump (JAL/JALR)
 
     // ── MA/WB ────────────────────────────────────────────────────────────────
     logic [31:0] ma_wb_aluResult;   // Result from the ALU unit
@@ -171,7 +230,7 @@ module phantom_core (
 
     // ── Control / Hazard / Flush ─────────────────────────────────────────────
     logic        stall;           // Stall Fetch flag
-    logic        branch_flush;    // Branch Flush (misprediction) flag
+    logic        branch_miss;     // Misprediction detected in MA-stage
     logic        trap_en;         // Trap Enable flag
     logic        mret_en;         // MRET flag
     logic        flush_if_id;     // 1 = flush the IF/ID pipeline register
@@ -232,13 +291,25 @@ module phantom_core (
     logic [31:0] alu_result;       // ALU output result value
     logic [31:0] ex_dmem_addr;     // dedicated DMEM address (rs1_fwd + imm)
     logic        branch_taken;     // Computed (NOT predicted) branch taken
-    logic [31:0] ex_targetAddr;    // branch/jump target address
     /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0] csr_rdData;       // CSR read with write-before-read forwarding
     /* verilator lint_on UNUSEDSIGNAL */
     logic [31:0] csr_rdDataRaw;    // CSR RAW read (NO forwarding) - used for RMW
     logic [31:0] ex_linkAddr;      // PC + 2 or PC + 4 (JAL/JALR link)
     logic        ex_csrWrGuard;    // 1 = write is allowed
+
+    // ── Branch predictor EX signals ──────────────────────────────────────────
+    logic [31:0] ex_targetAddr;    // branch/jump target address
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic [31:0] ex_targetAddr2;   // branch/jump target address + 2
+    /* verilator lint_on  UNUSEDSIGNAL */
+
+    // ── Branch predictor PreIF signals ───────────────────────────────────────
+    logic [PHT_IDX_W-1:0] pht_mar; // PHT Memory Access Register
+    logic [BTB_IDX_W-1:0] btb_mar; // BTB Memory Access Register
+    logic [1:0]  pht_rdata;        // combinational PHT output (2-bit counter)
+    logic [31:0] btb_rdata;        // combinational BTB output (target address)
+    logic        pred_taken;       // prediction bit: pht_rdata[1]
 
     // ── MemoryAccess Stage ───────────────────────────────────────────────────
     logic [31:0] trap_mepc;        // trap mepc    value
@@ -254,6 +325,10 @@ module phantom_core (
     logic [31:0] csr_wrData;       // CSR data to be written
     logic        csr_wrEnable;     // CSR Register Write flag
 
+    // ── Branch predictor MA signals ───────────────────────────────────────────
+    logic [31:0] truepc;           // TruePC  - the correct PC to redirect to
+    logic [31:0] below_pc;         // BelowPC - instruction following the branch
+
     // ── MemoryAccess Combinational Registers ─────────────────────────────────
     logic [31:0] load_data;        // load instruction's fetched data
     logic [3:0]  store_be;         // per-byte write enable register
@@ -265,17 +340,67 @@ module phantom_core (
 
 
   // ===========================================================================
-  // PreIF STAGE  ──  NextPC MUX and PC register
+  // PreIF STAGE  ──  NextPC MUX, PC register, PHT/BTB MAR, BHR update
   // ===========================================================================
-  //   [Phase III] BTB lookup: MAR ← next_pc, output → PredPC into PreIF/IF regs
-  //   [Phase III] PHT index:  XOR(BHR, r_pc) → PHT MAR into PreIF/IF regs
+  //
+  //  PreIF input registers: r_pc, r_pc2, r_pc4, r_pc6, r_bhr
+  //    These receive their values at the clock edge from the IF stage outputs
+  //    (next_pc, next_pc2, bhr_join).
+  //
+  //  PreIF combinational:
+  //    pht_rd_idx = r_bhr XOR r_pc[13:1]  → feeds PHT MAR (latches at clock edge)
+  //    BTB MAR ← next_pc[BTB_IDX_W:1]                     (latches at clock edge)
+  //
+  //  After the clock edge, in IF:
+  //    PHT data = pht[pht_mar]  (combinational, 1-cycle latency)
+  //    BTB data = btb[btb_mar]  (combinational, 1-cycle latency)
+  //    These give the prediction for the instruction now at r_pc.
   // ===========================================================================
 
+    // ── PC registers (r_pc = old next_pc, r_pc2 = old next_pc2) ──────────────
     always_ff @(posedge clk) begin
       r_pc  <= next_pc;
       r_pc2 <= next_pc2;
       r_pc4 <= next_pc2 + 32'd2;
       r_pc6 <= next_pc2 + 32'd4;
+    end
+
+    // ── PHT MAR: latch XOR(r_bhr, r_pc[13:1]) at every clock edge ────────────
+    always_ff @(posedge clk) pht_mar <= r_bhr ^ r_pc[PHT_IDX_W:1];
+
+    // ── BTB MAR: latch next_pc[BTB_IDX_W:1] at every clock edge ──────────────
+    always_ff @(posedge clk) btb_mar <= next_pc[BTB_IDX_W:1];
+
+    // ── PHT and BTB combinational reads (data valid in IF stage) ─────────────
+    assign pht_rdata = pht[pht_mar];
+    assign btb_rdata = btb[btb_mar];
+
+    // ── Prediction decision ("comb" unit) ────────────────────────────────────
+    // MSB of the 2-bit saturating counter: 1x = weakly/strongly taken.
+    assign pred_taken = pht_rdata[1];
+    // ── BHR register: speculative update ("join") or recovery ────────────────
+    // join:        shift BHR left, insert prediction bit at LSB.
+    // branch_miss: reset to 0
+    always_ff @(posedge clk) begin
+      if (!resetn || branch_miss) begin
+        r_bhr <= '0;
+      end else if (!stall) begin
+        r_bhr <= {r_bhr[BHR_W-2:0], pred_taken};
+      end
+    end
+    // ── PredPC / PredPC_2 / r_predTaken registers ───────────────────────────
+    always_ff @(posedge clk) begin
+      if (!resetn || branch_miss || trap_en || mret_en) begin
+        r_predTaken  <= 1'b0;
+        r_predpc     <= 32'd0;
+        r_predpc2    <= 32'd2;
+      end else if (stall) begin
+        // hold: prediction registers stay unchanged while PC frozen
+      end else begin
+        r_predTaken  <= pred_taken;
+        r_predpc     <= btb_rdata;
+        r_predpc2    <= btb_rdata + 32'd2;
+      end
     end
 
   // ===========================================================================
@@ -287,35 +412,35 @@ module phantom_core (
   // IF STAGE  ──  Instruction assembly and fast decode
   // ===========================================================================
   // NextPC MUX Priority (highest first):
-  //   trap_en      → mtvec         exception entry
-  //   mret_en      → mepc          return from trap
-  //   branch_flush → target        branch/jump resolved in EX
-  //   stall        → hold r_pc     load-use stall (re-fetch same instruction)
-  //   default      → r_pc + 2/4    sequential advance
+  //   0: !resetn      → RESET_VECTOR          (reset)
+  //   1: trap_en      → csr_mtvec             (exception entry)
+  //   2: mret_en      → csr_mepc              (return from trap)
+  //   3: branch_miss  → truepc                (misprediction correction, from MA)
+  //   4: stall        → r_pc                  (load-use stall, hold PC)
+  //   5: pred_taken   → r_predpc              (follow branch prediction)
+  //   6: default      → pc_inc_seq (+2 or +4) (sequential advance)
   // ===========================================================================
 
     // ── IMEM port assignments ────────────────────────────────────────────────
     assign imem_addr_a = next_pc;
     assign imem_addr_b = next_pc2;
 
-    // ── Branch flush ─────────────────────────────────────────────────────────
-    assign branch_flush = (id_ex_isBranch && branch_taken) || id_ex_isJump;
-
     // ── Pre-calculating ALL possible targets ─────────────────────────────────
-    logic [31:0] pc_inc_seq;   assign pc_inc_seq  = if_isCompressed ? r_pc2 : r_pc4;
-    logic [31:0] pc_inc_seq2;  assign pc_inc_seq2 = if_isCompressed ? r_pc4 : r_pc6;
-    logic [31:0] csr_mtvec2;   assign csr_mtvec2  = csr_mtvec     + 32'd2;
-    logic [31:0] csr_mepc2;    assign csr_mepc2   = csr_mepc      + 32'd2;
-    logic [31:0] ex_target2;   assign ex_target2  = ex_targetAddr + 32'd2;
+    logic [31:0] pc_inc_seq;   assign pc_inc_seq    = if_isCompressed ? r_pc2 : r_pc4;
+    logic [31:0] pc_inc_seq2;  assign pc_inc_seq2   = if_isCompressed ? r_pc4 : r_pc6;
+    logic [31:0] csr_mtvec2;   assign csr_mtvec2    = csr_mtvec     + 32'd2;
+    logic [31:0] csr_mepc2;    assign csr_mepc2     = csr_mepc      + 32'd2;
+    logic [31:0] truepc2_wire; assign truepc2_wire  = truepc        + 32'd2;
 
     // ── One-Hot nextpc_sel ───────────────────────────────────────────────────
-    logic [5:0] nextpc_sel;
-    assign nextpc_sel[0] = !resetn;                                                    // Reset  (Highest)
-    assign nextpc_sel[1] =  resetn &&  trap_en;                                        // TRAP
-    assign nextpc_sel[2] =  resetn && !trap_en &&  mret_en;                            // MRET
-    assign nextpc_sel[3] =  resetn && !trap_en && !mret_en &&  branch_flush;           // Branch/Jump
-    assign nextpc_sel[4] =  resetn && !trap_en && !mret_en && !branch_flush &&  stall; // Stall
-    assign nextpc_sel[5] =  resetn && !trap_en && !mret_en && !branch_flush && !stall; // Default (Lowest)
+    logic [6:0] nextpc_sel;
+    assign nextpc_sel[0] = !resetn;
+    assign nextpc_sel[1] =  resetn &&  trap_en;
+    assign nextpc_sel[2] =  resetn && !trap_en &&  mret_en;
+    assign nextpc_sel[3] =  resetn && !trap_en && !mret_en &&  branch_miss;
+    assign nextpc_sel[4] =  resetn && !trap_en && !mret_en && !branch_miss &&  stall;
+    assign nextpc_sel[5] =  resetn && !trap_en && !mret_en && !branch_miss && !stall &&  pred_taken;
+    assign nextpc_sel[6] =  resetn && !trap_en && !mret_en && !branch_miss && !stall && !pred_taken;
 
     // ── Parallel NextPC MUX ──────────────────────────────────────────────────
     always_comb begin
@@ -323,9 +448,10 @@ module phantom_core (
         nextpc_sel[0]: next_pc = `RESET_VECTOR;
         nextpc_sel[1]: next_pc = csr_mtvec;
         nextpc_sel[2]: next_pc = csr_mepc;
-        nextpc_sel[3]: next_pc = ex_targetAddr;
+        nextpc_sel[3]: next_pc = truepc;
         nextpc_sel[4]: next_pc = r_pc;
-        nextpc_sel[5]: next_pc = pc_inc_seq;
+        nextpc_sel[5]: next_pc = r_predpc;
+        nextpc_sel[6]: next_pc = pc_inc_seq;
         default:       next_pc = `RESET_VECTOR;
       endcase
     end
@@ -336,9 +462,10 @@ module phantom_core (
         nextpc_sel[0]: next_pc2 = `RESET_VECTOR + 32'd2;
         nextpc_sel[1]: next_pc2 = csr_mtvec2;
         nextpc_sel[2]: next_pc2 = csr_mepc2;
-        nextpc_sel[3]: next_pc2 = ex_target2;
+        nextpc_sel[3]: next_pc2 = truepc2_wire;
         nextpc_sel[4]: next_pc2 = r_pc2;
-        nextpc_sel[5]: next_pc2 = pc_inc_seq2;
+        nextpc_sel[5]: next_pc2 = r_predpc2;
+        nextpc_sel[6]: next_pc2 = pc_inc_seq2;
         default:       next_pc2 = `RESET_VECTOR + 32'd2;
       endcase
     end
@@ -346,8 +473,8 @@ module phantom_core (
     // ── Instruction assembly ─────────────────────────────────────────────────
     assign if_isCompressed = (imem_data_a[1:0] != 2'b11);
     assign if_instr        =
-       if_isCompressed   ? {16'd0,       imem_data_a}
-      /* not compressed */: {imem_data_b, imem_data_a};
+       if_isCompressed     ? {16'd0,       imem_data_a}
+      /* not compressed */ : {imem_data_b, imem_data_a};
 
     // ── fast_decoder ─────────────────────────────────────────────────────────
     fast_decoder u_fd (
@@ -366,13 +493,12 @@ module phantom_core (
   // ===========================================================================
   // IF/ID PIPELINE REGISTER
   // ===========================================================================
-  // Flush  (branch / trap / MRET): NOP - wrong-path instruction discarded.
-  // Stall  (load-use hazard):      NOP - upcoming instruction suppressed.
-  //   The load currently in IF/ID propagates normally into ID/EX this cycle.
-  //   PC is held so the suppressed instruction is re-fetched next cycle.
-  // Normal: capture current IF-stage fetch.
+  // Flush on branch_miss (same 3-cycle penalty as trap/MRET).
+  // Stall inserts NOP and holds PC — prediction registers cleared too
+  // (the stalled instruction will be re-evaluated with correct prediction
+  // when it re-enters IF on the next cycle).
   // ===========================================================================
-    assign flush_if_id = branch_flush || trap_en || mret_en;
+    assign flush_if_id = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
       if (!resetn || flush_if_id) begin
         if_id_instr     <= `NOP_INSTR;
@@ -384,6 +510,10 @@ module phantom_core (
         if_id_rs2Index  <= 5'd0;
         if_id_rdIndex   <= 5'd0;
         if_id_isLoad    <= 1'b0;
+        if_id_predTaken <= 1'b0;
+        if_id_predpc    <= 32'd0;
+        if_id_phtIdx    <= '0;
+        if_id_phtOld    <= 2'b01;
       end else if (stall) begin
         if_id_instr     <= `NOP_INSTR;
         if_id_pc        <= 32'd0;
@@ -394,6 +524,10 @@ module phantom_core (
         if_id_rs2Index  <= 5'd0;
         if_id_rdIndex   <= 5'd0;
         if_id_isLoad    <= 1'b0;
+        if_id_predTaken <= 1'b0;
+        if_id_predpc    <= 32'd0;
+        if_id_phtIdx    <= '0;
+        if_id_phtOld    <= 2'b01;
       end else begin
         if_id_instr     <= if_instr;
         if_id_pc        <= r_pc;
@@ -404,6 +538,10 @@ module phantom_core (
         if_id_rs2Index  <= fd_rs2Index;
         if_id_rdIndex   <= fd_rdIndex;
         if_id_isLoad    <= fd_isLoad;
+        if_id_predTaken <= r_predTaken;
+        if_id_predpc    <= r_predpc;
+        if_id_phtIdx    <= pht_mar;
+        if_id_phtOld    <= pht_rdata;
       end
     end
   // ===========================================================================
@@ -476,7 +614,7 @@ module phantom_core (
   // The NOP was already written to IF/ID so the dependent instruction cannot
   // enter this register.
   // ===========================================================================
-    assign flush_id_ex = branch_flush | trap_en | mret_en;
+    assign flush_id_ex = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
       if (!resetn || flush_id_ex) begin
         id_ex_aluOp      <= `ALU_ADD;
@@ -509,6 +647,10 @@ module phantom_core (
         id_ex_imm        <= 32'd0;
         id_ex_imm2       <= 32'd0;
         id_ex_instr      <= `NOP_INSTR;
+        id_ex_predTaken  <= 1'b0;
+        id_ex_predpc     <= 32'd0;
+        id_ex_phtIdx     <= '0;
+        id_ex_phtOld     <= 2'b01;
       end else begin
         id_ex_aluOp      <= id_aluOp;
         id_ex_isBranch   <= id_isBranch;
@@ -540,6 +682,10 @@ module phantom_core (
         id_ex_imm        <= id_imm;
         id_ex_imm2       <= id_imm2;
         id_ex_instr      <= if_id_instr;
+        id_ex_predTaken  <= if_id_predTaken;
+        id_ex_predpc     <= if_id_predpc;
+        id_ex_phtIdx     <= if_id_phtIdx;
+        id_ex_phtOld     <= if_id_phtOld;
       end
     end
 
@@ -651,11 +797,13 @@ module phantom_core (
 
     // ── Branch / jump target address ─────────────────────────────────────────
     branch_target u_btarget (
-      .pc          (id_ex_pc),
-      .rs1_data    (fwd_rs1Value),
-      .immediate   (id_ex_imm),
-      .is_jalr     (id_ex_isJalr),
-      .target_addr (ex_targetAddr)
+      .pc            (id_ex_pc),
+      .rs1_data      (fwd_rs1Value),
+      .immediate     (id_ex_imm),
+      .immediate_2   (id_ex_imm2),
+      .is_jalr       (id_ex_isJalr),
+      .target_addr   (ex_targetAddr),
+      .target_addr_2 (ex_targetAddr2)
     );
 
     assign ex_csrWrGuard = (id_ex_csrOp == `CSR_OP_RW) || (id_ex_csrUseImm
@@ -670,66 +818,82 @@ module phantom_core (
   // ===========================================================================
   // EX/MA PIPELINE REGISTER
   // ===========================================================================
-  // Flushed on trap or MRET only (branch flush does not reach this register).
+  // Flushed on trap or MRET & branch_miss
   // rs1Fwd / rs2Fwd carry the forwarded operands into MA for CSR RMW and
   // store data respectively.
   // ===========================================================================
-    assign flush_ex_ma = trap_en || mret_en;
+    assign flush_ex_ma = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
       if (!resetn || flush_ex_ma) begin
-        ex_ma_aluResult  <= 32'd0;
-        ex_ma_dmemAddr   <= 32'd0;
-        ex_ma_rs1Fwd     <= 32'd0;
-        ex_ma_rs2Fwd     <= 32'd0;
-        ex_ma_rdIndex    <= 5'd0;
-        ex_ma_regWrite   <= 1'b0;
-        ex_ma_wbSel      <= 2'b00;
-        ex_ma_memRead    <= 1'b0;
-        ex_ma_memWrite   <= 1'b0;
-        ex_ma_memWidth   <= `WIDTH_W;
-        ex_ma_csrEnable  <= 1'b0;
-        ex_ma_csrOp      <= 2'b00;
-        ex_ma_csrUseImm  <= 1'b0;
-        ex_ma_csrIndex   <= 12'h000;
-        ex_ma_isECALL    <= 1'b0;
-        ex_ma_isEBREAK   <= 1'b0;
-        ex_ma_isMRET     <= 1'b0;
-        ex_ma_isIllegal  <= 1'b0;
-        ex_ma_pc         <= 32'd0;
-        ex_ma_pc2        <= 32'd0;
-        ex_ma_pc4        <= 32'd0;
-        ex_ma_isComp     <= 1'b0;
-        ex_ma_instr      <= `NOP_INSTR;
-        ex_ma_linkAddr   <= 32'd0;
-        ex_ma_rdNonZero  <= 1'b0;
-        ex_ma_csrWrGuard <= 1'b0;
+        ex_ma_aluResult   <= 32'd0;
+        ex_ma_dmemAddr    <= 32'd0;
+        ex_ma_rs1Fwd      <= 32'd0;
+        ex_ma_rs2Fwd      <= 32'd0;
+        ex_ma_rdIndex     <= 5'd0;
+        ex_ma_regWrite    <= 1'b0;
+        ex_ma_wbSel       <= 2'b00;
+        ex_ma_memRead     <= 1'b0;
+        ex_ma_memWrite    <= 1'b0;
+        ex_ma_memWidth    <= `WIDTH_W;
+        ex_ma_csrEnable   <= 1'b0;
+        ex_ma_csrOp       <= 2'b00;
+        ex_ma_csrUseImm   <= 1'b0;
+        ex_ma_csrIndex    <= 12'h000;
+        ex_ma_isECALL     <= 1'b0;
+        ex_ma_isEBREAK    <= 1'b0;
+        ex_ma_isMRET      <= 1'b0;
+        ex_ma_isIllegal   <= 1'b0;
+        ex_ma_pc          <= 32'd0;
+        ex_ma_pc2         <= 32'd0;
+        ex_ma_pc4         <= 32'd0;
+        ex_ma_isComp      <= 1'b0;
+        ex_ma_instr       <= `NOP_INSTR;
+        ex_ma_linkAddr    <= 32'd0;
+        ex_ma_rdNonZero   <= 1'b0;
+        ex_ma_csrWrGuard  <= 1'b0;
+        ex_ma_predTaken   <= 1'b0;
+        ex_ma_predpc      <= 32'd0;
+        ex_ma_phtIdx      <= '0;
+        ex_ma_phtOld      <= 2'b01;
+        ex_ma_targetAddr  <= 32'd0;
+        ex_ma_branchTaken <= 1'b0;
+        ex_ma_isBranch    <= 1'b0;
+        ex_ma_isJump      <= 1'b0;
       end else begin
-        ex_ma_aluResult  <= alu_result;
-        ex_ma_dmemAddr   <= ex_dmem_addr;
-        ex_ma_rs1Fwd     <= fwd_rs1Value;
-        ex_ma_rs2Fwd     <= fwd_rs2Value;
-        ex_ma_rdIndex    <= id_ex_rdIndex;
-        ex_ma_regWrite   <= id_ex_regWrite;
-        ex_ma_wbSel      <= id_ex_wbSel;
-        ex_ma_memRead    <= id_ex_memRead;
-        ex_ma_memWrite   <= id_ex_memWrite;
-        ex_ma_memWidth   <= id_ex_memWidth;
-        ex_ma_csrEnable  <= id_ex_csrEnable;
-        ex_ma_csrOp      <= id_ex_csrOp;
-        ex_ma_csrUseImm  <= id_ex_csrUseImm;
-        ex_ma_csrIndex   <= id_ex_csrIndex;
-        ex_ma_isECALL    <= id_ex_isECALL;
-        ex_ma_isEBREAK   <= id_ex_isEBREAK;
-        ex_ma_isMRET     <= id_ex_isMRET;
-        ex_ma_isIllegal  <= id_ex_isIllegal;
-        ex_ma_pc         <= id_ex_pc;
-        ex_ma_pc2        <= id_ex_pc2;
-        ex_ma_pc4        <= id_ex_pc4;
-        ex_ma_isComp     <= id_ex_isComp;
-        ex_ma_instr      <= id_ex_instr;
-        ex_ma_linkAddr   <= ex_linkAddr;
-        ex_ma_rdNonZero  <= (id_ex_rdIndex != 5'd0);
-        ex_ma_csrWrGuard <= ex_csrWrGuard;
+        ex_ma_aluResult   <= alu_result;
+        ex_ma_dmemAddr    <= ex_dmem_addr;
+        ex_ma_rs1Fwd      <= fwd_rs1Value;
+        ex_ma_rs2Fwd      <= fwd_rs2Value;
+        ex_ma_rdIndex     <= id_ex_rdIndex;
+        ex_ma_regWrite    <= id_ex_regWrite;
+        ex_ma_wbSel       <= id_ex_wbSel;
+        ex_ma_memRead     <= id_ex_memRead;
+        ex_ma_memWrite    <= id_ex_memWrite;
+        ex_ma_memWidth    <= id_ex_memWidth;
+        ex_ma_csrEnable   <= id_ex_csrEnable;
+        ex_ma_csrOp       <= id_ex_csrOp;
+        ex_ma_csrUseImm   <= id_ex_csrUseImm;
+        ex_ma_csrIndex    <= id_ex_csrIndex;
+        ex_ma_isECALL     <= id_ex_isECALL;
+        ex_ma_isEBREAK    <= id_ex_isEBREAK;
+        ex_ma_isMRET      <= id_ex_isMRET;
+        ex_ma_isIllegal   <= id_ex_isIllegal;
+        ex_ma_pc          <= id_ex_pc;
+        ex_ma_pc2         <= id_ex_pc2;
+        ex_ma_pc4         <= id_ex_pc4;
+        ex_ma_isComp      <= id_ex_isComp;
+        ex_ma_instr       <= id_ex_instr;
+        ex_ma_linkAddr    <= ex_linkAddr;
+        ex_ma_rdNonZero   <= (id_ex_rdIndex != 5'd0);
+        ex_ma_csrWrGuard  <= ex_csrWrGuard;
+        ex_ma_predTaken   <= id_ex_predTaken;
+        ex_ma_predpc      <= id_ex_predpc;
+        ex_ma_phtIdx      <= id_ex_phtIdx;
+        ex_ma_phtOld      <= id_ex_phtOld;
+        ex_ma_targetAddr  <= ex_targetAddr;
+        ex_ma_branchTaken <= (id_ex_isBranch && branch_taken) || id_ex_isJump;
+        ex_ma_isBranch    <= id_ex_isBranch;
+        ex_ma_isJump      <= id_ex_isJump;
       end
     end
   // ===========================================================================
@@ -739,6 +903,7 @@ module phantom_core (
 
   // ===========================================================================
   // MA STAGE  ──  Trap detection, CSR access, DMEM access, load extension
+  //               branch_miss detection, TruePC computation, PHT/BTB update
   // ===========================================================================
 
     // ── Trap unit ────────────────────────────────────────────────────────────
@@ -759,6 +924,52 @@ module phantom_core (
       .trap_mtval    (trap_mtval),
       .mret_en       (mret_en)
     );
+    
+    // ── Branch misprediction detection ───────────────────────────────────────
+    // branch_miss fires when a branch or jump resolved to a different outcome
+    // than predicted.
+    // On branch_miss: flush 3 stages, redirect to truepc.
+    assign branch_miss = !trap_en && !mret_en && (ex_ma_isBranch || ex_ma_isJump) &&
+      (
+        (ex_ma_branchTaken != ex_ma_predTaken) ||
+        (ex_ma_branchTaken && (ex_ma_targetAddr != ex_ma_predpc))
+      );
+
+    // ── TruePC and BelowPC computation ───────────────────────────────────────
+    // BelowPC = address of the instruction immediately AFTER the branch.
+    //   Compressed branch: BelowPC = branch_pc + 2  (= ex_ma_pc2)
+    //   32-bit branch:     BelowPC = branch_pc + 4  (= ex_ma_pc4)
+    // TruePC: if the branch WAS actually taken, go to the real target.
+    //         if NOT taken, go to the instruction after the branch.
+    assign below_pc  = ex_ma_isComp      ? ex_ma_pc2        : ex_ma_pc4;
+    assign truepc    = ex_ma_branchTaken ? ex_ma_targetAddr : below_pc;
+
+    // ── PHT write-back: saturating counter update ────────────────────────────
+    // Only conditional branches update the PHT (not unconditional jumps).
+    // Uses the stored PHT index (ex_ma_phtIdx) and old counter (ex_ma_phtOld)
+    // that were captured when the instruction was in IF.
+    logic [1:0] pht_wdata;
+    always_comb begin
+      pht_wdata = ex_ma_phtOld;  // default: no update
+      if (ex_ma_isBranch) begin
+        if (ex_ma_branchTaken)
+          pht_wdata = (ex_ma_phtOld == 2'b11) ? 2'b11 : ex_ma_phtOld + 2'b01;
+        else
+          pht_wdata = (ex_ma_phtOld == 2'b00) ? 2'b00 : ex_ma_phtOld - 2'b01;
+      end
+    end
+    always_ff @(posedge clk) begin
+      if (ex_ma_isBranch) pht[ex_ma_phtIdx] <= pht_wdata;
+    end
+
+    // ── BTB write-back: update target on any taken branch or jump ────────────
+    // Index = branch instruction PC [BTB_IDX_W:1] (halfword-addressed).
+    // After this write, subsequent encounters of the same branch PC will have
+    // the correct target in BTB (and PHT will predict taken after training).
+    always_ff @(posedge clk) begin
+      if ((ex_ma_isBranch && ex_ma_branchTaken) || ex_ma_isJump)
+        btb[ex_ma_pc[BTB_IDX_W:1]] <= ex_ma_targetAddr;
+    end
 
     // ── CSR Read-Modify-Write ────────────────────────────────────────────────
     // csr_rdDataRaw is the raw flip-flop value, free of write-before-read
