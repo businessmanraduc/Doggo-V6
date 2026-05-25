@@ -5,6 +5,8 @@ SIM  = ../cpu_files/sim
 
 CORE_SV = \
   $(CORE)/phantom-core.sv    \
+	$(CORE)/pht.sv 						 \
+	$(CORE)/btb.sv						 \
   $(CORE)/branch-eval.sv     \
   $(CORE)/fast-decode.sv     \
   $(CORE)/trap-unit.sv       \
@@ -38,3 +40,5 @@ wave:
 
 clean:
 	rm -rf obj_dir waveform.vcd program.elf program.hex
+
+

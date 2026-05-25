@@ -85,22 +85,18 @@ module phantom_core (
 );
 
   // ===========================================================================
-  // BRANCH PREDICTOR DIMENSIONS & BSRAM ARRAYS
+  // BRANCH PREDICTOR DIMENSIONS
   // ===========================================================================
-  // PHT: 8192 × 2-bit saturating counters.  Yosys infers one DP16KD EBR block.
-  // BTB: 512  × 32-bit target addresses.    Yosys infers one DP16KD EBR block.
-  // Both initialize to 0 (predict not-taken / target=0) on FPGA power-up.
+  // Widths duplicated here so phantom_core signal declarations use them directly;
+  // the matching pht/btb submodule parameters are set at instantiation.
   // ===========================================================================
     localparam integer PHT_DEPTH  = 8192; // 2^13 PHT entries (2-bit counters)
     localparam integer PHT_IDX_W  = 13;
     localparam integer BTB_DEPTH  = 512;  // 2^9  BTB entries (32-bit targets)
     localparam integer BTB_IDX_W  = 9;
     localparam integer BHR_W      = 13;
-
-    (* ram_style = "block" *) logic [1:0]  pht [0:PHT_DEPTH - 1];
-    (* ram_style = "block" *) logic [31:0] btb [0:BTB_DEPTH - 1];
   // ===========================================================================
-  // BRANCH PREDICTOR DIMENSIONS & BSRAM ARRAYS
+  // BRANCH PREDICTOR DIMENSIONS
   // ===========================================================================
  
 
@@ -305,8 +301,7 @@ module phantom_core (
     /* verilator lint_on  UNUSEDSIGNAL */
 
     // ── Branch predictor PreIF signals ───────────────────────────────────────
-    logic [PHT_IDX_W-1:0] pht_mar; // PHT Memory Access Register
-    logic [BTB_IDX_W-1:0] btb_mar; // BTB Memory Access Register
+    logic [PHT_IDX_W-1:0] pht_mar; // PHT MAR output - captured into IF/ID
     logic [1:0]  pht_rdata;        // combinational PHT output (2-bit counter)
     logic [31:0] btb_rdata;        // combinational BTB output (target address)
     logic        pred_taken;       // prediction bit: pht_rdata[1]
@@ -342,19 +337,10 @@ module phantom_core (
   // ===========================================================================
   // PreIF STAGE  ──  NextPC MUX, PC register, PHT/BTB MAR, BHR update
   // ===========================================================================
-  //
-  //  PreIF input registers: r_pc, r_pc2, r_pc4, r_pc6, r_bhr
-  //    These receive their values at the clock edge from the IF stage outputs
-  //    (next_pc, next_pc2, bhr_join).
-  //
-  //  PreIF combinational:
-  //    pht_rd_idx = r_bhr XOR r_pc[13:1]  → feeds PHT MAR (latches at clock edge)
-  //    BTB MAR ← next_pc[BTB_IDX_W:1]                     (latches at clock edge)
-  //
-  //  After the clock edge, in IF:
-  //    PHT data = pht[pht_mar]  (combinational, 1-cycle latency)
-  //    BTB data = btb[btb_mar]  (combinational, 1-cycle latency)
-  //    These give the prediction for the instruction now at r_pc.
+  //  u_pht: XOR(r_bhr, r_pc[13:1]) → PHT MAR (PreIF/IF register) → pht_rdata in IF
+  //  u_btb: next_pc[9:1] → BTB MAR (IF/PreIF register) → btb_rdata → r_predpc (PreIF/IF)
+  //  Both submodules also receive their write ports wired directly from MA stage
+  //  signals, keeping the PHT and BTB update logic out of phantom_core entirely.
   // ===========================================================================
 
     // ── PC registers (r_pc = old next_pc, r_pc2 = old next_pc2) ──────────────
@@ -365,20 +351,39 @@ module phantom_core (
       r_pc6 <= next_pc2 + 32'd4;
     end
 
-    // ── PHT MAR: latch XOR(r_bhr, r_pc[13:1]) at every clock edge ────────────
-    always_ff @(posedge clk) pht_mar <= r_bhr ^ r_pc[PHT_IDX_W:1];
+    pht #(
+      .PHT_DEPTH (PHT_DEPTH),
+      .PHT_IDX_W (PHT_IDX_W),
+      .BHR_W     (BHR_W)
+    ) u_pht (
+      .clk           (clk),
+      .r_bhr         (r_bhr),
+      .pre_pc        (r_pc),
+      .pht_rdata     (pht_rdata),
+      .pht_mar       (pht_mar),
+      .update_en     (ex_ma_isBranch),
+      .update_idx    (ex_ma_phtIdx),
+      .update_old    (ex_ma_phtOld),
+      .update_taken  (ex_ma_branchTaken)
+    );
 
-    // ── BTB MAR: latch next_pc[BTB_IDX_W:1] at every clock edge ──────────────
-    always_ff @(posedge clk) btb_mar <= next_pc[BTB_IDX_W:1];
+    btb #(
+      .BTB_DEPTH (BTB_DEPTH),
+      .BTB_IDX_W (BTB_IDX_W)
+    ) u_btb (
+      .clk           (clk),
+      .next_pc       (next_pc),
+      .btb_rdata     (btb_rdata),
+      .update_en     ((ex_ma_isBranch && ex_ma_branchTaken) || ex_ma_isJump),
+      .update_idx    (ex_ma_pc[BTB_IDX_W:1]),
+      .update_target (ex_ma_targetAddr)
+    );
 
-    // ── PHT and BTB combinational reads (data valid in IF stage) ─────────────
-    assign pht_rdata = pht[pht_mar];
-    assign btb_rdata = btb[btb_mar];
-
-    // ── Prediction decision ("comb" unit) ────────────────────────────────────
+    // ── Prediction decision ("comb" unit) ───────────────────────────────────
     // MSB of the 2-bit saturating counter: 1x = weakly/strongly taken.
     assign pred_taken = pht_rdata[1];
-    // ── BHR register: speculative update ("join") or recovery ────────────────
+
+    // ── BHR register: speculative update ("join") or recovery ───────────────
     // join:        shift BHR left, insert prediction bit at LSB.
     // branch_miss: reset to 0
     always_ff @(posedge clk) begin
@@ -388,6 +393,7 @@ module phantom_core (
         r_bhr <= {r_bhr[BHR_W-2:0], pred_taken};
       end
     end
+
     // ── PredPC / PredPC_2 / r_predTaken registers ───────────────────────────
     always_ff @(posedge clk) begin
       if (!resetn || branch_miss || trap_en || mret_en) begin
@@ -494,7 +500,7 @@ module phantom_core (
   // IF/ID PIPELINE REGISTER
   // ===========================================================================
   // Flush on branch_miss (same 3-cycle penalty as trap/MRET).
-  // Stall inserts NOP and holds PC — prediction registers cleared too
+  // Stall inserts NOP and holds PC - prediction registers cleared too
   // (the stalled instruction will be re-evaluated with correct prediction
   // when it re-enters IF on the next cycle).
   // ===========================================================================
@@ -924,7 +930,7 @@ module phantom_core (
       .trap_mtval    (trap_mtval),
       .mret_en       (mret_en)
     );
-    
+
     // ── Branch misprediction detection ───────────────────────────────────────
     // branch_miss fires when a branch or jump resolved to a different outcome
     // than predicted.
@@ -943,33 +949,6 @@ module phantom_core (
     //         if NOT taken, go to the instruction after the branch.
     assign below_pc  = ex_ma_isComp      ? ex_ma_pc2        : ex_ma_pc4;
     assign truepc    = ex_ma_branchTaken ? ex_ma_targetAddr : below_pc;
-
-    // ── PHT write-back: saturating counter update ────────────────────────────
-    // Only conditional branches update the PHT (not unconditional jumps).
-    // Uses the stored PHT index (ex_ma_phtIdx) and old counter (ex_ma_phtOld)
-    // that were captured when the instruction was in IF.
-    logic [1:0] pht_wdata;
-    always_comb begin
-      pht_wdata = ex_ma_phtOld;  // default: no update
-      if (ex_ma_isBranch) begin
-        if (ex_ma_branchTaken)
-          pht_wdata = (ex_ma_phtOld == 2'b11) ? 2'b11 : ex_ma_phtOld + 2'b01;
-        else
-          pht_wdata = (ex_ma_phtOld == 2'b00) ? 2'b00 : ex_ma_phtOld - 2'b01;
-      end
-    end
-    always_ff @(posedge clk) begin
-      if (ex_ma_isBranch) pht[ex_ma_phtIdx] <= pht_wdata;
-    end
-
-    // ── BTB write-back: update target on any taken branch or jump ────────────
-    // Index = branch instruction PC [BTB_IDX_W:1] (halfword-addressed).
-    // After this write, subsequent encounters of the same branch PC will have
-    // the correct target in BTB (and PHT will predict taken after training).
-    always_ff @(posedge clk) begin
-      if ((ex_ma_isBranch && ex_ma_branchTaken) || ex_ma_isJump)
-        btb[ex_ma_pc[BTB_IDX_W:1]] <= ex_ma_targetAddr;
-    end
 
     // ── CSR Read-Modify-Write ────────────────────────────────────────────────
     // csr_rdDataRaw is the raw flip-flop value, free of write-before-read
