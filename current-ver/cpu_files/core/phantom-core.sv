@@ -125,6 +125,8 @@ module phantom_core (
     logic [4:0]  if_id_rs2Index;    // rs2 index (from fast_decoder)
     logic [4:0]  if_id_rdIndex;     // rd  index (from fast_decoder, for hazard unit)
     logic        if_id_isLoad;      // 1 = load  (from fast_decoder, for hazard unit)
+    logic [31:0] if_id_imm;         // Immediate value
+    logic [31:0] if_id_imm2;        // imm + 2
     // ── Branch predictor IF/ID registers ─────────────────────────────────────
     logic [31:0]          if_id_predpc;     // propagate predicted target to MA-stage
     logic                 if_id_predTaken;  // propagate prediction bit   to MA-stage
@@ -245,6 +247,10 @@ module phantom_core (
     logic [4:0]  fd_rdIndex;       // extracted rd  index
     logic        fd_isLoad;        // extracted isLoad flag
 
+    // ── imm_generator outputs (IF stage - runs in parallel with fast_decoder)
+    logic [31:0] if_imm;           // extracted immediate value
+    logic [31:0] if_imm2;          // extracted immediate value (+2)
+
     // ── control_unit outputs ─────────────────────────────────────────────────
     logic [3:0]  id_aluOp;         // extracted ALU opcode
     logic        id_aluLHS;        // rs1Data pre-select (0 = rs1, 1 = PC)
@@ -266,10 +272,6 @@ module phantom_core (
     logic        id_isIllegal;     // illegal instruction flag
     logic        id_regWrite;      // Register Write flag
     logic [1:0]  id_wbSel;         // extracted Write-Back Stage MUX selector
-
-    // ── imm_generator outputs ────────────────────────────────────────────────
-    logic [31:0] id_imm;           // extracted immediate value
-    logic [31:0] id_imm2;          // extracted immediate value (+2)
 
     // ── regfile outputs ──────────────────────────────────────────────────────
     logic [31:0] rf_rs1Data;       // fetched rs1 value
@@ -320,7 +322,7 @@ module phantom_core (
     logic [31:0] csr_wrData;       // CSR data to be written
     logic        csr_wrEnable;     // CSR Register Write flag
 
-    // ── Branch predictor MA signals ───────────────────────────────────────────
+    // ── Branch predictor MA signals ──────────────────────────────────────────
     logic [31:0] truepc;           // TruePC  - the correct PC to redirect to
     logic [31:0] below_pc;         // BelowPC - instruction following the branch
 
@@ -379,11 +381,11 @@ module phantom_core (
       .update_target (ex_ma_targetAddr)
     );
 
-    // ── Prediction decision ("comb" unit) ───────────────────────────────────
+    // ── Prediction decision ("comb" unit) ────────────────────────────────────
     // MSB of the 2-bit saturating counter: 1x = weakly/strongly taken.
     assign pred_taken = pht_rdata[1];
 
-    // ── BHR register: speculative update ("join") or recovery ───────────────
+    // ── BHR register: speculative update ("join") or recovery ────────────────
     // join:        shift BHR left, insert prediction bit at LSB.
     // branch_miss: reset to 0
     always_ff @(posedge clk) begin
@@ -394,7 +396,7 @@ module phantom_core (
       end
     end
 
-    // ── PredPC / PredPC_2 / r_predTaken registers ───────────────────────────
+    // ── PredPC / PredPC_2 / r_predTaken registers ────────────────────────────
     always_ff @(posedge clk) begin
       if (!resetn || branch_miss || trap_en || mret_en) begin
         r_predTaken  <= 1'b0;
@@ -491,6 +493,14 @@ module phantom_core (
       .rd_index      (fd_rdIndex),
       .is_load       (fd_isLoad)
     );
+
+    // ── imm_generator (parallel with fast_decoder) ───────────────────────────
+    imm_generator u_immgen (
+      .instrWord      (if_instr),
+      .is_compressed  (if_isCompressed),
+      .immediate      (if_imm),
+      .immediate_2    (if_imm2)
+    );
   // ===========================================================================
   // IF STAGE
   // ===========================================================================
@@ -516,6 +526,8 @@ module phantom_core (
         if_id_rs2Index  <= 5'd0;
         if_id_rdIndex   <= 5'd0;
         if_id_isLoad    <= 1'b0;
+        if_id_imm       <= 32'd0;
+        if_id_imm2      <= 32'd2;
         if_id_predTaken <= 1'b0;
         if_id_predpc    <= 32'd0;
         if_id_phtIdx    <= '0;
@@ -530,6 +542,8 @@ module phantom_core (
         if_id_rs2Index  <= 5'd0;
         if_id_rdIndex   <= 5'd0;
         if_id_isLoad    <= 1'b0;
+        if_id_imm       <= 32'd0;
+        if_id_imm2      <= 32'd2;
         if_id_predTaken <= 1'b0;
         if_id_predpc    <= 32'd0;
         if_id_phtIdx    <= '0;
@@ -544,6 +558,8 @@ module phantom_core (
         if_id_rs2Index  <= fd_rs2Index;
         if_id_rdIndex   <= fd_rdIndex;
         if_id_isLoad    <= fd_isLoad;
+        if_id_imm       <= if_imm;
+        if_id_imm2      <= if_imm2;
         if_id_predTaken <= r_predTaken;
         if_id_predpc    <= r_predpc;
         if_id_phtIdx    <= pht_mar;
@@ -580,13 +596,6 @@ module phantom_core (
       .is_illegal     (id_isIllegal),
       .reg_write      (id_regWrite),
       .wb_sel         (id_wbSel)
-    );
-
-    imm_generator u_immgen (
-      .instrWord      (if_id_instr),
-      .is_compressed  (if_id_isComp),
-      .immediate      (id_imm),
-      .immediate_2    (id_imm2)
     );
 
     regfile u_rf (
@@ -676,8 +685,8 @@ module phantom_core (
         id_ex_isIllegal  <= id_isIllegal;
         id_ex_regWrite   <= id_regWrite;
         id_ex_wbSel      <= id_wbSel;
-        id_ex_rs1Data    <= id_aluLHS ? if_id_pc : rf_rs1Data;
-        id_ex_rs2Data    <= id_aluRHS ? id_imm   : rf_rs2Data;
+        id_ex_rs1Data    <= id_aluLHS ? if_id_pc  : rf_rs1Data;
+        id_ex_rs2Data    <= id_aluRHS ? if_id_imm : rf_rs2Data;
         id_ex_rs1Index   <= if_id_rs1Index;
         id_ex_rs2Index   <= if_id_rs2Index;
         id_ex_rdIndex    <= if_id_rdIndex;
@@ -685,8 +694,8 @@ module phantom_core (
         id_ex_pc2        <= if_id_pc2;
         id_ex_pc4        <= if_id_pc4;
         id_ex_isComp     <= if_id_isComp;
-        id_ex_imm        <= id_imm;
-        id_ex_imm2       <= id_imm2;
+        id_ex_imm        <= if_id_imm;
+        id_ex_imm2       <= if_id_imm2;
         id_ex_instr      <= if_id_instr;
         id_ex_predTaken  <= if_id_predTaken;
         id_ex_predpc     <= if_id_predpc;
@@ -781,7 +790,7 @@ module phantom_core (
     assign alu_lhs = fwd_rs1Value;
     assign alu_rhs = fwd_rs2Value;
  
-    // ── Dedicated DMEM address adder ──────────────────────────────────────────
+    // ── Dedicated DMEM address adder ─────────────────────────────────────────
     // rs1_fwd + imm with no intervening muxes or ALU case statement.
     assign ex_dmem_addr = fwd_rs1Value + id_ex_imm;
 

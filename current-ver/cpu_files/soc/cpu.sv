@@ -134,7 +134,7 @@ module cpu (
   //   Generate from a compiled ELF using programs/bin2imem_hex.py.
   // ===========================================================================
     (* ram_style = "block" *) logic [15:0] imem_a [0:4095];
-    (* ram_syyle = "block" *) logic [15:0] imem_b [0:4095];
+    (* ram_style = "block" *) logic [15:0] imem_b [0:4095];
 
     initial begin
       $readmemh("imem.hex", imem_a);
