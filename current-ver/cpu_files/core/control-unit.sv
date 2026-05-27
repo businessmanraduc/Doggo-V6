@@ -95,7 +95,11 @@ module control_unit (
         `CQ0: begin
           case (cfunc3)
             `CF3_C_ADDI4SPN: begin      // rd' = sp + nzuimm8
-              alu_op    = `ALU_ADD; alu_src_b = 1'b1; reg_write = 1'b1;
+              if (instrWord[12:5] == 8'd0) begin
+                is_illegal = 1'b1;      // nzuimm=0 reserved per RVC spec
+              end else begin
+                alu_op  = `ALU_ADD; alu_src_b = 1'b1; reg_write = 1'b1;
+              end
             end
             `CF3_C_LW:       begin      // rd' = mem32[rs1' + uimm5]
               alu_op    = `ALU_ADD; alu_src_b = 1'b1; reg_write = 1'b1;

@@ -14,7 +14,7 @@ int main(int argc, char** argv) {
     top->clk = 0;
     top->resetn = 0;
 
-    for (int i = 0; i < 10000; i++) {
+    for (int i = 0; i < 100000; i++) {
         if (i > 5) top->resetn = 1;
         top->clk = !top->clk;
         top->eval();

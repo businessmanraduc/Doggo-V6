@@ -16,18 +16,33 @@
 #ifndef _PHANTOM32_RISCV_TEST_H
 #define _PHANTOM32_RISCV_TEST_H
 
+#include "encoding.h"
+
 // ── Register that holds the current sub-test number ─────────────────────────
 #define TESTNUM gp
 
 #define RVTEST_RV32U                                                    \
   .option norvc;                                                        \
 
+#define RVTEST_RV32M                                                    \
+  .option norvc;                                                        \
+
 // ── Test code section begin ─────────────────────────────────────────────────
 #define RVTEST_CODE_BEGIN                                               \
   .text;                                                                \
   .align 2;                                                             \
+  .weak mtvec_handler;                                                  \
+  .weak stvec_handler;                                                  \
   .global _start;                                                       \
   _start:                                                               \
+    j     _test_begin;                                                  \
+    .align 2;                                                           \
+  _mtvec_entry:                                                         \
+    la    t0, mtvec_handler;                                            \
+    jr    t0;                                                           \
+  _test_begin:                                                          \
+  la      t0, _mtvec_entry;                                             \
+  csrw    mtvec, t0;                                                    \
     li TESTNUM, 0;                                                      \
 
 // ── Test code section end ───────────────────────────────────────────────────

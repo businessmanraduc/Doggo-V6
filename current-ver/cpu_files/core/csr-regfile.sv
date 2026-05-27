@@ -127,7 +127,10 @@ module csr_regfile (
     end else if (wr_en) begin
       // ── Normal CSR write ─────────────────────────────────────────────────────
       case (wr_addr)
-        `CSR_MSTATUS:  r_mstatus  <= wr_data & MSTATUS_MASK;
+        `CSR_MSTATUS:  r_mstatus  <= (wr_data & 32'h0000_0088) | 32'h0000_1800;
+        //`CSR_MSTATUS:  r_mstatus  <= wr_data & MSTATUS_MASK;
+        // while this is the correct one on the long run, the current
+        // phantom_core does NOT support S/U mode, only M-mode
         `CSR_MIE:      r_mie      <= wr_data & MIE_MASK;
         `CSR_MTVEC:    r_mtvec    <= wr_data & MTVEC_MASK;
         `CSR_MSCRATCH: r_mscratch <= wr_data & MSCRATCH_MASK;
@@ -151,7 +154,10 @@ module csr_regfile (
   always_comb begin
     case (rd_addr)
       // ── Read-Write CSRs (with forwarding) ────────────────────────────────────
-      `CSR_MSTATUS:   rd_data = (wr_en && wr_addr == `CSR_MSTATUS)  ? (wr_data & MSTATUS_MASK)  : r_mstatus;
+      `CSR_MSTATUS:   rd_data = (wr_en && wr_addr == `CSR_MSTATUS)  ? ((wr_data & 32'h0000_0088) | 32'h0000_1800) : r_mstatus;
+      //`CSR_MSTATUS:   rd_data = (wr_en && wr_addr == `CSR_MSTATUS)  ? (wr_data & MSTATUS_MASK)  : r_mstatus;
+      // while this is the correct one on the long run, the current
+      // phantom_core does NOT support S/U mode, only M-mode
       `CSR_MIE:       rd_data = (wr_en && wr_addr == `CSR_MIE)      ? (wr_data & MIE_MASK)      : r_mie;
       `CSR_MTVEC:     rd_data = (wr_en && wr_addr == `CSR_MTVEC)    ? (wr_data & MTVEC_MASK)    : r_mtvec;
       `CSR_MSCRATCH:  rd_data = (wr_en && wr_addr == `CSR_MSCRATCH) ? (wr_data & MSCRATCH_MASK) : r_mscratch;

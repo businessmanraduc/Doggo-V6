@@ -57,6 +57,20 @@ RV32UC_TESTS=(
   rvc
 )
 
+# rv32mi: machine-mode infrastructure  (traps, CSRs, misalignment)
+# Notes:
+#   ma_fetch  - skipped: tests misaligned instruction fetch; not applicable to
+#               Phantom-32's halfword-aligned IMEM model.
+#   csr       - may have partial failures: Phantom-32 implements M-mode only,
+#               some WARL field checks assume S/U modes exist.
+RV32MI_TESTS=(
+  csr
+  illegal
+  ma_addr
+  breakpoint
+  scall
+)
+
 # Skipped tests and reasons:
 #   fence_i - tests FENCE.I (I-cache flush); Phantom-32 has no I-cache.
 #              Behaviour depends on how control_unit decodes the FENCE.I
@@ -113,6 +127,7 @@ run_test() {
     -nostdlib \
     -I "$PHANTOM_ENV" \
     -I "$RISCV_TESTS/isa/macros/scalar" \
+    -I "$RISCV_TESTS/env" \
     -T "$PHANTOM_ENV/phantom32_link.ld" \
     "$src" -o "$elf" 2>/dev/null; then
     echo "COMPILE FAIL"
@@ -169,6 +184,12 @@ echo ""
 echo "[ rv32uc - compressed instruction tests ]"
 for t in "${RV32UC_TESTS[@]}"; do
   run_test "rv32uc" "$t"
+done
+
+echo ""
+echo "[ rv32mi - machine-mode infrastructure tests ]"
+for t in "${RV32MI_TESTS[@]}"; do
+  run_test "rv32mi" "$t"
 done
 
 # ── Summary ───────────────────────────────────────────────────────────────────
