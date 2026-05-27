@@ -10,8 +10,8 @@
 // Operand B: rs2 or immediate (selected by ALUBSel mux before this module)
 // Opcode:    4-bit operation select (`ALU_* constants from isa.vh)
 //
-// Branch comparisons are NOT here - the EX stage handles those directly
-// with Verilog comparison operators to keep the critical path short.
+// Branch comparisons are in branch-eval.sv, instantiated in the EX stage
+// in parallel with the ALU.
 // =============================================================================
 module alu (
   input  logic [31:0] lhs,     // operand A  (rs1 or ProgramCounter, post-forwarding)

@@ -24,8 +24,8 @@ module branch_target (
 );
 
   assign target_addr   = (is_jalr)
-        ? ((rs1_data + immediate) & 32'hFFFFFFFE)
-        : ((pc       + immediate) & 32'hFFFFFFFF);
+        ? ((rs1_data + immediate)   & 32'hFFFFFFFE)
+        : ((pc       + immediate)   & 32'hFFFFFFFF);
 
   assign target_addr_2 = (is_jalr)
         ? ((rs1_data + immediate_2) & 32'hFFFFFFFE)
