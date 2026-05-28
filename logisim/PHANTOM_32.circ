@@ -8049,11 +8049,11 @@
     <comp lib="3" loc="(420,830)" name="Comparator">
       <a name="width" val="3"/>
     </comp>
-    <comp lib="8" loc="(657,743)" name="Text">
+    <comp lib="8" loc="(655,740)" name="Text">
       <a name="font" val="SansSerif bold 8"/>
       <a name="text" val="load_misalign"/>
     </comp>
-    <comp lib="8" loc="(660,513)" name="Text">
+    <comp lib="8" loc="(660,510)" name="Text">
       <a name="font" val="SansSerif bold 8"/>
       <a name="text" val="store_misalign"/>
     </comp>
@@ -8228,13 +8228,13 @@
     <a name="circuit" val="phantom_core"/>
     <a name="circuitnamedboxfixedsize" val="true"/>
     <a name="simulationFrequency" val="1.0"/>
-    <comp lib="0" loc="(160,510)" name="Pin">
-      <a name="appearance" val="classic"/>
-      <a name="label" val="clk"/>
-    </comp>
-    <comp lib="0" loc="(160,550)" name="Pin">
+    <comp lib="0" loc="(160,780)" name="Pin">
       <a name="appearance" val="classic"/>
       <a name="label" val="resetn"/>
+    </comp>
+    <comp lib="0" loc="(160,820)" name="Pin">
+      <a name="appearance" val="classic"/>
+      <a name="label" val="clk"/>
     </comp>
     <comp lib="0" loc="(220,250)" name="Pin">
       <a name="appearance" val="classic"/>
@@ -8299,23 +8299,6 @@
       <a name="label" val="dmem_we"/>
       <a name="type" val="output"/>
     </comp>
-    <comp loc="(1320,1220)" name="id_ex_interstage"/>
-    <comp loc="(330,1220)" name="if_preif_interstage"/>
-    <comp loc="(330,1370)" name="branch_target_buffer"/>
-    <comp loc="(660,1000)" name="pattern_history_table"/>
-    <comp loc="(660,1220)" name="preif_if_interstage"/>
-    <comp loc="(980,1220)" name="if_id_interstage"/>
-    <wire from="(100,1200)" to="(100,1220)"/>
-    <wire from="(100,1200)" to="(430,1200)"/>
-    <wire from="(100,1220)" to="(110,1220)"/>
-    <wire from="(1090,1200)" to="(1090,1220)"/>
-    <wire from="(1090,1220)" to="(1100,1220)"/>
-    <wire from="(430,1200)" to="(430,1220)"/>
-    <wire from="(430,1200)" to="(750,1200)"/>
-    <wire from="(430,1220)" to="(440,1220)"/>
-    <wire from="(750,1200)" to="(1090,1200)"/>
-    <wire from="(750,1200)" to="(750,1220)"/>
-    <wire from="(750,1220)" to="(760,1220)"/>
   </circuit>
   <circuit name="preif_if_interstage">
     <a name="appearance" val="logisim_evolution"/>
@@ -8606,15 +8589,6 @@
       <a name="type" val="output"/>
       <a name="width" val="32"/>
     </comp>
-    <comp lib="0" loc="(470,120)" name="Constant">
-      <a name="value" val="0x0"/>
-    </comp>
-    <comp lib="0" loc="(480,120)" name="Pin">
-      <a name="appearance" val="classic"/>
-      <a name="facing" val="west"/>
-      <a name="label" val="o_blank_o"/>
-      <a name="type" val="output"/>
-    </comp>
     <comp lib="4" loc="(290,140)" name="Register">
       <a name="appearance" val="logisim_evolution"/>
       <a name="label" val="r_bhr"/>
@@ -8643,7 +8617,6 @@
     <wire from="(320,360)" to="(320,370)"/>
     <wire from="(350,170)" to="(420,170)"/>
     <wire from="(350,300)" to="(420,300)"/>
-    <wire from="(470,120)" to="(480,120)"/>
   </circuit>
   <circuit name="if_id_interstage">
     <a name="appearance" val="logisim_evolution"/>

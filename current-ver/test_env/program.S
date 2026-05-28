@@ -6,3 +6,5 @@ _start:
   li t0, 0x80001000
   sw x2, 0(t0)
 loop: j loop
+
+

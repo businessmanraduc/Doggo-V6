@@ -56,7 +56,6 @@ module phantom_core (
     logic [31:0]      r_pc6;
 
     logic [31:0]      r_predpc;         // BTB predicted target for r_pc
-    logic             r_predTaken;      // 1 => prediction taken for r_pc
     logic [31:0]      r_predpc2;        // BTB predicted target for r_pc2
 
     // ── IF/ID ────────────────────────────────────────────────────────────────
@@ -159,6 +158,10 @@ module phantom_core (
     logic             ex_ma_csrWrGuard; // 1 => CSR write allowed
 
     // ── MA/WB ────────────────────────────────────────────────────────────────
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic [31:0]      ma_wb_pc;
+    /* verilator lint_on  UNUSEDSIGNAL */
+
     logic [4:0]       ma_wb_rdIndex;
     logic             ma_wb_rdNonZero;
     logic [31:0]      ma_wb_aluResult;
@@ -322,7 +325,7 @@ module phantom_core (
       .next_pc       (next_pc),
       .btb_rdata     (btb_rdata),
       .update_en     ((ex_ma_isBranch && ex_ma_branchTaken) || ex_ma_isJump),
-      .update_idx    (ex_ma_pc[BTB_IDX_W:1]),
+      .update_idx    (ma_wb_pc[BTB_IDX_W:1]),
       .update_target (ex_ma_targetAddr)
     );
 
@@ -339,8 +342,7 @@ module phantom_core (
 
     // ── PrePC: update in the same manner as r_pc ─────────────────────────────
     always_ff @(posedge clk) begin
-      if (!resetn) r_prepc <= `RESET_VECTOR;
-      else         r_prepc <= next_pc;
+      r_prepc <= next_pc;
     end
 
   // ===========================================================================
@@ -379,11 +381,9 @@ module phantom_core (
     // ── Prediction registers: reset on any miss, trap or MRET ────────────────
     always_ff @(posedge clk) begin
       if (!resetn || branch_miss || id_branch_miss || trap_en || mret_en) begin
-        r_predTaken <= 1'b0;
         r_predpc    <= 32'd0;
         r_predpc2   <= 32'd2;
       end else if (!stall) begin
-        r_predTaken <= pred_taken;
         r_predpc    <= btb_rdata;
         r_predpc2   <= btb_rdata + 32'd2;
       end
@@ -476,7 +476,7 @@ module phantom_core (
       if_id_pc4       <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc4;
 
       if_id_predpc    <= (!resetn || flush_if_id || stall) ? 32'd0      : r_predpc;
-      if_id_predTaken <= (!resetn || flush_if_id || stall) ? 1'b0       : r_predTaken;
+      if_id_predTaken <= (!resetn || flush_if_id || stall) ? 1'b0       : pred_taken;
       if_id_phtIdx    <= (!resetn || flush_if_id || stall) ? '0         : pht_idx;
       if_id_phtOld    <= (!resetn || flush_if_id || stall) ? 2'b01      : pht_rdata;
 
@@ -896,6 +896,7 @@ module phantom_core (
   // ===========================================================================
 
     always_ff @(posedge clk) begin
+      ma_wb_pc        <= !resetn ? 32'd0  : ex_ma_pc;
       ma_wb_rdIndex   <= !resetn ? 5'd0   : ex_ma_rdIndex;
       ma_wb_rdNonZero <= !resetn ? 1'b0   : ex_ma_rdNonZero;
       ma_wb_aluResult <= !resetn ? 32'd0  : ex_ma_aluResult;
