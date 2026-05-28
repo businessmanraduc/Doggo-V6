@@ -115,9 +115,17 @@ module soc (
     logic [3:0]  periph_be;
     logic [31:0] periph_rdata;
 
+    logic        clint_sel;
+    logic [31:0] clint_rdata;
+    logic        clint_mtip;
+    logic        clint_msip;
+
     cpu u_cpu (
       .clk          (cpu_clk),
       .resetn       (cpu_resetn),
+      .irq_timer    (clint_mtip),
+      .irq_soft     (clint_msip),
+      .irq_ext      (1'b0),
       .periph_addr  (periph_addr),
       .periph_wdata (periph_wdata),
       .periph_we    (periph_we),
@@ -150,10 +158,31 @@ module soc (
       end
     end
 
-    // ── Peripheral read data ─────────────────────────────────────────────────
-    // No readable peripherals in Phase III.
-    // Extended to a mux when CLINT / UART status registers are added.
-    assign periph_rdata = 32'h00000000;
+    // ── CLINT  @  0x8001_0000  (64 KB region, SiFive-standard offsets) ───────
+    assign clint_sel = (periph_addr[31:16] == 16'h8001);
+
+    clint #(
+      .CLK_HZ  (50_000_000),
+      .TICK_HZ (1_000_000)
+    ) u_clint (
+      .clk     (cpu_clk),
+      .resetn  (cpu_resetn),
+      .sel     (clint_sel),
+      .offset  (periph_addr[15:0]),
+      .we      (periph_we),
+      .be      (periph_be),
+      .wdata   (periph_wdata),
+      .rdata   (clint_rdata),
+      .mtip    (clint_mtip),
+      .msip    (clint_msip)
+    );
+
+    // ── Peripheral read data mux ─────────────────────────────────────────────
+    always_comb begin
+      if (clint_sel) periph_rdata = clint_rdata;
+      else           periph_rdata = 32'h00000000;
+    end
+
   // ===========================================================================
   // PERIPHERAL ADDRESS DECODE
   // ===========================================================================

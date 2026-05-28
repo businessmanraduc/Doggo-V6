@@ -8,7 +8,8 @@ CORE_SV = \
 	$(CORE)/pht.sv 						 \
 	$(CORE)/btb.sv						 \
   $(CORE)/branch-eval.sv     \
-  $(CORE)/fast-decode.sv     \
+  $(CORE)/interrupt-unit.sv  \
+	$(CORE)/fast-decode.sv     \
   $(CORE)/trap-unit.sv       \
   $(CORE)/csr-regfile.sv     \
   $(CORE)/control-unit.sv    \

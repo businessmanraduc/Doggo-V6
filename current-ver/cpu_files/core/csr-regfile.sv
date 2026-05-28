@@ -50,13 +50,21 @@ module csr_regfile (
   // ── Direct outputs (wired from flip-flops, bypassing rd_data mux) ────────────
   output logic [31:0] out_mstatus,    // full mstatus word (pipeline checks MIE)
   output logic [31:0] out_mtvec,      // trap vector base + mode
-  output logic [31:0] out_mepc        // saved exception PC (for MRET target)
+  output logic [31:0] out_mepc,       // saved exception PC (for MRET target)
+  output logic [31:0] out_mie,        // machine interrupt-enable (to interrupt_unit)
+  output logic [31:0] out_mip,        // machine interrupt-pending (HW-driven)
+
+  // ── Hardware interrupt lines (drive the read-only mip bits) ──────────────────
+  input  logic        hw_mtip,        // machine timer    interrupt pending (CLINT)
+  input  logic        hw_msip,        // machine software interrupt pending (CLINT)
+  input  logic        hw_meip         // machine external interrupt pending (PLIC/ext)
 );
 
   // =============================================================================
   // WARL MASKS
   // =============================================================================
-  // Define which bits of each CSR are writable. Reserved bits forced to zero.
+  // Define which bits of each CSR are writable. Reserved bits forced to zero;
+  // mip has no software-writable bits: MEIP/MTIP/MSIP are hardware-driven.
   // =============================================================================
   localparam MSTATUS_MASK  = 32'h0000_1888;  // bits 12:11 (MPP) + 7 (MPIE) + 3 (MIE)
   localparam MIE_MASK      = 32'h0000_0888;  // bits 11 (MEIE) + 7 (MTIE) + 3 (MSIE)
@@ -65,7 +73,6 @@ module csr_regfile (
   localparam MCAUSE_MASK   = 32'h8000_000F;  // bit 31 (interrupt) + bits 3:0 (code)
   localparam MTVAL_MASK    = 32'hFFFF_FFFF;  // fully writable
   localparam MSCRATCH_MASK = 32'hFFFF_FFFF;  // fully writable
-  localparam MIP_MASK      = 32'h0000_0888;  // same writable bits as MIE
 
 
   // =============================================================================
@@ -78,7 +85,6 @@ module csr_regfile (
   logic [31:0] r_mepc;      // Exception program counter (saved PC)
   logic [31:0] r_mcause;    // Exception cause code
   logic [31:0] r_mtval;     // Trap value: faulting address or instruction
-  logic [31:0] r_mip;       // Interrupt pending: MEIP, MTIP, MSIP
 
 
   // =============================================================================
@@ -87,7 +93,13 @@ module csr_regfile (
   assign out_mstatus = r_mstatus;
   assign out_mtvec   = r_mtvec;
   assign out_mepc    = r_mepc;
+  assign out_mie     = r_mie;
 
+  // ── mip: read-only composite of the hardware interrupt lines ─────────────────
+  // MEIP=bit11, MTIP=bit7, MSIP=bit3 per the RISC-V privileged spec.
+  logic [31:0] mip_val;
+  assign       mip_val = {20'b0, hw_meip, 3'b0, hw_mtip, 3'b0, hw_msip, 3'b0};
+  assign       out_mip = mip_val;
 
   // =============================================================================
   // SYNCHRONOUS WRITE / RESET / TRAP / MRET
@@ -107,7 +119,6 @@ module csr_regfile (
       r_mepc     <= 32'h0;
       r_mcause   <= 32'h0;
       r_mtval    <= 32'h0;
-      r_mip      <= 32'h0;
 
     end else if (trap_en) begin
       // ── Trap entry ───────────────────────────────────────────────────────────
@@ -137,7 +148,6 @@ module csr_regfile (
         `CSR_MEPC:     r_mepc     <= wr_data & MEPC_MASK;
         `CSR_MCAUSE:   r_mcause   <= wr_data & MCAUSE_MASK;
         `CSR_MTVAL:    r_mtval    <= wr_data & MTVAL_MASK;
-        `CSR_MIP:      r_mip      <= wr_data & MIP_MASK;
         default: ;  // writes to read-only CSRs silently ignored
       endcase
     end
@@ -164,7 +174,7 @@ module csr_regfile (
       `CSR_MEPC:      rd_data = (wr_en && wr_addr == `CSR_MEPC)     ? (wr_data & MEPC_MASK)     : r_mepc;
       `CSR_MCAUSE:    rd_data = (wr_en && wr_addr == `CSR_MCAUSE)   ? (wr_data & MCAUSE_MASK)   : r_mcause;
       `CSR_MTVAL:     rd_data = (wr_en && wr_addr == `CSR_MTVAL)    ? (wr_data & MTVAL_MASK)    : r_mtval;
-      `CSR_MIP:       rd_data = (wr_en && wr_addr == `CSR_MIP)      ? (wr_data & MIP_MASK)      : r_mip;
+      `CSR_MIP:       rd_data = mip_val;    // read-only, hardware-driven
 
       // ── Read-Only CSRs (no forwarding needed) ────────────────────────────────
       `CSR_MISA:      rd_data = `CSR_VAL_MISA;
@@ -195,7 +205,7 @@ module csr_regfile (
       `CSR_MEPC:      rd_data_raw = r_mepc;
       `CSR_MCAUSE:    rd_data_raw = r_mcause;
       `CSR_MTVAL:     rd_data_raw = r_mtval;
-      `CSR_MIP:       rd_data_raw = r_mip;
+      `CSR_MIP:       rd_data_raw = mip_val;
       `CSR_MISA:      rd_data_raw = `CSR_VAL_MISA;
       `CSR_MVENDORID: rd_data_raw = `CSR_VAL_MVENDORID;
       `CSR_MARCHID:   rd_data_raw = `CSR_VAL_MARCHID;

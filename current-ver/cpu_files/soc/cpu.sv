@@ -37,6 +37,11 @@ module cpu (
   input  logic clk,
   input  logic resetn,
 
+  // ── Interrupt request lines (from soc: CLINT / external) ───────────────────
+  input  logic        irq_timer,
+  input  logic        irq_soft,
+  input  logic        irq_ext,
+
   // ── Peripheral bus ─────────────────────────────────────────────────────────
   // Signals are valid in MA stage. periph_rdata must be stable by end of MA.
   // soc.sv drives periph_rdata combinationally from periph_addr.
@@ -111,7 +116,10 @@ module cpu (
       .dmem_we      (dmem_we),
       .dmem_be      (dmem_be),
       .dmem_wdata   (dmem_wdata),
-      .dmem_rdata   (dmem_rdata)
+      .dmem_rdata   (dmem_rdata),
+      .irq_timer    (irq_timer),
+      .irq_soft     (irq_soft),
+      .irq_ext      (irq_ext),
     );
   // ===========================================================================
   // PHANTOM CORE

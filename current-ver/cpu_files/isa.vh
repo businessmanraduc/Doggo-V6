@@ -241,6 +241,18 @@
 
 
 // =============================================================================
+// ── INTERRUPT CAUSE CODES / mie+mip BIT POSITIONS ────────────────────────────
+// =============================================================================
+// For machine interrupts the mie-enable bit, the mip-pending bit, and the
+// mcause code all share the same number, so one constant serves all three.
+// mcause for an interrupt is {1'b1, 27'b0, code}.
+// =============================================================================
+`define IRQ_MSI   3     // machine software interrupt (mie/mip bit 3,  cause 3)
+`define IRQ_MTI   7     // machine timer    interrupt (mie/mip bit 7,  cause 7)
+`define IRQ_MEI   11    // machine external interrupt (mie/mip bit 11, cause 11)
+
+
+// =============================================================================
 // ── MAGIC INSTRUCTION ENCODINGS ──────────────────────────────────────────────
 // =============================================================================
 // A NOP bubble inserted into the pipeline is the canonical RISC-V NOP:

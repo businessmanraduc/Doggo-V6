@@ -30,7 +30,10 @@ module tb_core (
     .dmem_wdata  (dmem_wdata),
     .dmem_we     (dmem_we),
     .dmem_be     (dmem_be),
-    .dmem_rdata  (dmem_rdata)
+    .dmem_rdata  (dmem_rdata),
+    .irq_timer   (1'b0),
+    .irq_soft    (1'b0),
+    .irq_ext     (1'b0)
   );
 
   always_ff @(posedge clk) begin

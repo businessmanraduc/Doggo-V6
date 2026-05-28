@@ -10,5 +10,9 @@ pkgs.mkShell {
     autoconf
     automake
     gnumake
+    yosys
+    nextpnr
+    trellis
+    openfpgaloader
   ];
 }

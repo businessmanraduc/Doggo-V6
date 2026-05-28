@@ -25,7 +25,12 @@ module phantom_core (
   output logic [31:0] dmem_wdata,     // store data (byte-lane shifted)
   output logic        dmem_we,        // write enable
   output logic [3:0]  dmem_be,        // per-byte write enables
-  input  logic [31:0] dmem_rdata      // load data (full 32-bit word)
+  input  logic [31:0] dmem_rdata,     // load data (full 32-bit word)
+
+  // ── Interrupt request lines (level-sensitive, drive mip) ─────────────────────
+  input  logic        irq_timer,      // machine timer    interrupt (CLINT mtip)
+  input  logic        irq_soft,       // machine software interrupt (CLINT msip)
+  input  logic        irq_ext         // machine external interrupt (PLIC/ext)
 );
 
   // ===========================================================================
@@ -77,6 +82,7 @@ module phantom_core (
     logic [4:0]       if_id_rs1Index;   // extracted rs1 index
     logic [4:0]       if_id_rs2Index;   // extracted rs2 index
     logic [4:0]       if_id_rdIndex;    // extracted rd  index
+    logic             if_id_valid;      // 1 => real instruction (not a bubble)
 
     // ── ID/EX ────────────────────────────────────────────────────────────────
     logic [31:0]      id_ex_pc;         // PC value for ID's instruction
@@ -120,6 +126,7 @@ module phantom_core (
     logic             id_ex_isEBREAK;
     logic             id_ex_isMRET;
     logic             id_ex_isIllegal;
+    logic             id_ex_valid;
 
     // ── EX/MA ────────────────────────────────────────────────────────────────
     logic [31:0]      ex_ma_pc;
@@ -156,6 +163,7 @@ module phantom_core (
     logic             ex_ma_isMRET;
     logic             ex_ma_isIllegal;
     logic             ex_ma_csrWrGuard; // 1 => CSR write allowed
+    logic             ex_ma_valid;      // 1 => MA instr is real (irq inject qualifier)
 
     // ── MA/WB ────────────────────────────────────────────────────────────────
     /* verilator lint_off UNUSEDSIGNAL */
@@ -284,8 +292,16 @@ module phantom_core (
     /* verilator lint_on  UNUSEDSIGNAL */
     logic             ex_csrWrGuard;
 
-    // ── MA: trap_unit outputs ────────────────────────────────────────────────
-    logic [31:0]      trap_mepc;
+    // ── MA: trap_unit outputs (synchronous exceptions only) ──────────────────
+    logic             sync_trap;
+    logic [31:0]      sync_mepc;
+    logic [31:0]      sync_mcause;
+    logic [31:0]      sync_mtval;
+
+    // ── MA: interrupt_unit + combined trap signals ───────────────────────────
+    logic             irq_take;
+    logic [3:0]       irq_cause;
+    logic [31:0]      trap_mepc;    // combined: sync exception OR interrupt
     logic [31:0]      trap_mcause;
     logic [31:0]      trap_mtval;
 
@@ -295,6 +311,8 @@ module phantom_core (
     /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0]      csr_mstatus;
     /* verilator lint_on  UNUSEDSIGNAL */
+    logic [31:0]      csr_mie;
+    logic [31:0]      csr_mip;
     logic [31:0]      csr_zimm;
     logic [31:0]      csr_rs1Value;
     logic [31:0]      csr_wrDataRS;
@@ -489,6 +507,7 @@ module phantom_core (
       if_id_rs1Index  <= (!resetn || flush_if_id || stall) ? 5'd0       : fd_rs1Index;
       if_id_rs2Index  <= (!resetn || flush_if_id || stall) ? 5'd0       : fd_rs2Index;
       if_id_rdIndex   <= (!resetn || flush_if_id || stall) ? 5'd0       : fd_rdIndex;
+      if_id_valid     <= (!resetn || flush_if_id || stall) ? 1'b0       : 1'b1;
     end
 
   // ===========================================================================
@@ -624,6 +643,7 @@ module phantom_core (
       id_ex_isEBREAK    <= (!resetn || flush_id_ex) ? 1'b0       : id_isEBREAK;
       id_ex_isMRET      <= (!resetn || flush_id_ex) ? 1'b0       : id_isMRET;
       id_ex_isIllegal   <= (!resetn || flush_id_ex) ? 1'b0       : id_isIllegal;
+      id_ex_valid       <= (!resetn || flush_id_ex) ? 1'b0       : if_id_valid;
     end
 
   // ===========================================================================
@@ -733,7 +753,12 @@ module phantom_core (
       .mret_en     (mret_en),
       .out_mstatus (csr_mstatus),
       .out_mtvec   (csr_mtvec),
-      .out_mepc    (csr_mepc)
+      .out_mepc    (csr_mepc),
+      .out_mie     (csr_mie),
+      .out_mip     (csr_mip),
+      .hw_mtip     (irq_timer),
+      .hw_msip     (irq_soft),
+      .hw_meip     (irq_ext)
     );
 
   // ===========================================================================
@@ -781,6 +806,7 @@ module phantom_core (
       ex_ma_isMRET      <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isMRET;
       ex_ma_isIllegal   <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isIllegal;
       ex_ma_csrWrGuard  <= (!resetn || flush_ex_ma) ? 1'b0       : ex_csrWrGuard;
+      ex_ma_valid       <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_valid;
     end
 
   // ===========================================================================
@@ -805,13 +831,32 @@ module phantom_core (
       .ma_is_ebreak  (ex_ma_isEBREAK),
       .ma_is_illegal (ex_ma_isIllegal),
       .ma_is_mret    (ex_ma_isMRET),
-      .trap_en       (trap_en),
-      .trap_mepc     (trap_mepc),
-      .trap_mcause   (trap_mcause),
-      .trap_mtval    (trap_mtval),
+      .trap_en       (sync_trap),
+      .trap_mepc     (sync_mepc),
+      .trap_mcause   (sync_mcause),
+      .trap_mtval    (sync_mtval),
       .mret_en       (mret_en)
     );
-   
+
+    // ── interrupt_unit: evaluate async interrupts at the MA instruction ───────
+    interrupt_unit u_irq (
+      .mie         (csr_mie),
+      .mip         (csr_mip),
+      .mstatus_mie (csr_mstatus[3]),
+      .ma_valid    (ex_ma_valid),
+      .sync_trap   (sync_trap),
+      .irq_take    (irq_take),
+      .irq_cause   (irq_cause)
+    );
+
+    // ── Combined trap: synchronous exception OR asynchronous interrupt ────────
+    // Both save the MA instruction's PC (sync_mepc == ex_ma_pc). The interrupted
+    // instruction does not commit so it cleanly re-executes when the handler returns.
+    assign trap_en      = sync_trap || irq_take;
+    assign trap_mepc    = sync_mepc;
+    assign trap_mcause  = irq_take ? {1'b1, 27'b0, irq_cause} : sync_mcause;
+    assign trap_mtval   = irq_take ? 32'd0 : sync_mtval;
+
     // ── CSR Read-Modify-Write ────────────────────────────────────────────────
     assign csr_zimm     = {27'd0, ex_ma_instr[19:15]};
     assign csr_rs1Value = ex_ma_csrUseImm ? csr_zimm : ex_ma_rs1Fwd;
@@ -875,7 +920,7 @@ module phantom_core (
     assign dmem_we    = ex_ma_memWrite && !trap_en;
     assign dmem_be    = store_be;
     assign dmem_wdata = store_data;
-    
+
     // ── MA forwarding value ──────────────────────────────────────────────────
     always_comb begin
       case (ex_ma_wbSel)
