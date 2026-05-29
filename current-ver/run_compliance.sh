@@ -9,8 +9,10 @@
 # Directory layout:
 #   current-ver/
 #   ├── test_env/
-#   │   ├── program.hex          ← overwritten for each test
-#   │   └── obj_dir/Vsim         ← pre-built Verilator simulation binary
+#   │   ├── core/                ← pipeline/ISA test sources (program.S, sim_main.cpp)
+#   │   ├── interrupts/          ← timer-IRQ test sources (tb_irq driver + program)
+#   │   ├── program.hex          ← overwritten for each test (built from core/program.S)
+#   │   └── obj_dir/Vsim         ← pre-built Verilator simulation binary (tb_core)
 #   ├── phantom32-env/
 #   │   ├── riscv_test.h
 #   │   └── phantom32_link.ld

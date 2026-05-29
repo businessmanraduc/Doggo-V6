@@ -62,6 +62,7 @@ module phantom_core (
 
     logic [31:0]      r_predpc;         // BTB predicted target for r_pc
     logic [31:0]      r_predpc2;        // BTB predicted target for r_pc2
+    logic             r_predvalid;      // BTB valid bit for r_predpc entry
 
     // ── IF/ID ────────────────────────────────────────────────────────────────
     logic [31:0]      if_id_pc;         // PC value for IF's instruction
@@ -203,7 +204,8 @@ module phantom_core (
     logic [31:0]      next_pc2;
 
     // ── PreIF: branch predictor ──────────────────────────────────────────────
-    logic [31:0]      btb_rdata;        // BTB combinational output
+    logic [31:0]      btb_rdata;        // BTB target combinational output
+    logic             btb_valid;        // BTB valid  combinational output
     logic             pred_taken;       // prediction bit: pht_rdata[1]
 
     // ── IF: PHT output ───────────────────────────────────────────────────────
@@ -219,6 +221,7 @@ module phantom_core (
     logic [4:0]       fd_rs2Index;
     logic [4:0]       fd_rdIndex;
     logic             fd_isLoad;
+    logic             fd_isBranchJump;
 
     // ── IF: imm_generator outputs ────────────────────────────────────────────
     logic [31:0]      if_imm;
@@ -340,14 +343,16 @@ module phantom_core (
       .BTB_IDX_W (BTB_IDX_W)
     ) u_btb (
       .clk           (clk),
+      .resetn        (resetn),
       .next_pc       (next_pc),
       .btb_rdata     (btb_rdata),
+      .btb_valid     (btb_valid),
       .update_en     ((ex_ma_isBranch && ex_ma_branchTaken) || ex_ma_isJump),
       .update_idx    (ma_wb_pc[BTB_IDX_W:1]),
       .update_target (ex_ma_targetAddr)
     );
 
-    assign pred_taken = pht_rdata[1];
+    assign pred_taken = pht_rdata[1] && fd_isBranchJump && r_predvalid;
 
     // ── BHR: speculative join update, reset on any miss ──────────────────────
     always_ff @(posedge clk) begin
@@ -401,9 +406,11 @@ module phantom_core (
       if (!resetn || branch_miss || id_branch_miss || trap_en || mret_en) begin
         r_predpc    <= 32'd0;
         r_predpc2   <= 32'd2;
+        r_predvalid <= 1'b0;
       end else if (!stall) begin
         r_predpc    <= btb_rdata;
         r_predpc2   <= btb_rdata + 32'd2;
+        r_predvalid <= btb_valid;
       end
     end
 
@@ -467,7 +474,8 @@ module phantom_core (
       .rs1_index      (fd_rs1Index),
       .rs2_index      (fd_rs2Index),
       .rd_index       (fd_rdIndex),
-      .is_load        (fd_isLoad)
+      .is_load        (fd_isLoad),
+      .is_branch_jump (fd_isBranchJump)
     );
 
     // ── imm_generator ────────────────────────────────────────────────────────
@@ -726,8 +734,8 @@ module phantom_core (
     assign ex_targetMiss  = (ex_targetAddr  != id_ex_predpc);
     assign ex_predMiss    = (ex_branchTaken != id_ex_predTaken)
                          || (ex_branchTaken && ex_targetMiss);
-    assign branch_miss    = !trap_en && !mret_en && !id_ex_earlySolve
-      && (id_ex_isBranch || id_ex_isJump) && ex_predMiss;
+    assign branch_miss    = !trap_en && !mret_en
+      && !id_ex_earlySolve && ex_predMiss;
 
     assign belowpc = id_ex_isComp   ? id_ex_pc2     : id_ex_pc4;
     assign truepc  = ex_branchTaken ? ex_targetAddr : belowpc;

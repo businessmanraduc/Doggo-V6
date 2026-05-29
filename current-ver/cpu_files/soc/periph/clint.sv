@@ -62,9 +62,10 @@ module clint #(
       r_msip     <= 1'b0;
     end else if (sel && we) begin
       case (offset)
-        16'h0000: if (be[0]) r_msip <= wdata[0]; 
+        16'h0000: if (be[0]) r_msip <= wdata[0];
         16'h4000: r_mtimecmp[31:0]  <= wdata;
         16'h4004: r_mtimecmp[63:32] <= wdata;
+        default: ;
       endcase
     end
   end

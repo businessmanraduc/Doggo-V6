@@ -44,10 +44,12 @@ SV_SOURCES = \
   $(CORE)/branch-eval.sv     \
   $(CORE)/branch-target.sv   \
   $(CORE)/trap-unit.sv       \
+	$(CORE)/interrupt-unit.sv  \
   $(CORE)/pht.sv             \
   $(CORE)/btb.sv             \
   $(CORE)/phantom-core.sv    \
   $(SOC)/periph/uart-tx.sv   \
+	$(SOC)/periph/clint.sv		 \
   $(SOC)/cpu.sv              \
   $(SOC)/soc.sv
 
