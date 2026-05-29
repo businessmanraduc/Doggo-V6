@@ -49,7 +49,7 @@ SV_SOURCES = \
   $(CORE)/btb.sv             \
   $(CORE)/phantom-core.sv    \
   $(SOC)/periph/uart-tx.sv   \
-	$(SOC)/periph/clint.sv		 \
+	$(SOC)/periph/clint.sv     \
   $(SOC)/cpu.sv              \
   $(SOC)/soc.sv
 

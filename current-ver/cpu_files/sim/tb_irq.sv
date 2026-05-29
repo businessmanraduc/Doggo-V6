@@ -51,7 +51,7 @@ module tb_irq (
       $display("[IRQ] timer interrupt taken: mepc=%08h mcause=%08h (mtime=%0d mtimecmp=%0d)",
                dut.ex_ma_pc, dut.trap_mcause, u_clint.r_mtime[31:0], u_clint.r_mtimecmp[31:0]);
     if (dmem_we && (dmem_waddr_aligned == 32'h80001000)) begin
-      $display("IRQ Test Finished. IRQ count: %0d", dmem_wdata);
+      $display("IRQ Test Finished. Result: %0d", dmem_wdata);
       $finish;
     end
   end

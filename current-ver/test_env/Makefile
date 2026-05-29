@@ -67,8 +67,10 @@ IRQ_SV = 								 \
   $(SOC)/periph/clint.sv \
   $(SIM)/tb_irq.sv
 
+IRQ_TEST ?= test_timer_irq
+
 compile-irq:
-	$(GCC) $(GFLAGS) -o irq.elf $(IRQ_DIR)/test_timer_irq.S
+	$(GCC) $(GFLAGS) -o irq.elf $(IRQ_DIR)/$(IRQ_TEST).S
 	$(OBJCOPY) -O verilog irq.elf irq.hex
 	$(VERILATOR) $(VFLAGS_COMMON) --top-module tb_irq \
 	  $(IRQ_SV) --exe $(IRQ_DIR)/sim_main_irq.cpp -o Vsim_irq
@@ -76,6 +78,11 @@ compile-irq:
 
 run-irq: compile-irq
 	./obj_dir/Vsim_irq
+
+run-irq-all:
+	@for t in test_timer_irq test_soft_irq test_irq_masked test_irq_nested; do \
+		$(MAKE) --no-print-directory run-irq IRQ_TEST=$$t; \
+	done
 
 wave-irq:
 	gtkwave irq_waveform.vcd
