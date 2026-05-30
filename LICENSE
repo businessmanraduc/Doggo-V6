@@ -1,0 +1,73 @@
+PHANTOM-32 - Proprietary License (All Rights Reserved)
+
+Copyright (c) 2026 Radu Arseni. All Rights Reserved.
+
+================================================================================
+SOURCE-AVAILABLE, VIEW-ONLY LICENSE
+================================================================================
+
+This repository and all of its contents - including but not limited to the
+source code, hardware description (HDL/RTL) files, documentation, scripts,
+build files, and any accompanying materials (collectively, the "Work") - are
+the exclusive property of the copyright holder, Radu Arseni (the "Author").
+
+The Work is made publicly visible for the SOLE purposes of viewing, reading,
+evaluation, and reference. Public visibility does NOT grant any license or
+right to use the Work beyond viewing it.
+
+--------------------------------------------------------------------------------
+1. NO RIGHTS GRANTED BEYOND VIEWING
+--------------------------------------------------------------------------------
+No permission is granted, expressly or by implication, to any person or entity
+to do any of the following with the Work or any portion or derivative of it,
+without the express prior WRITTEN permission of the Author:
+
+  (a) copy, clone, download, mirror, or otherwise reproduce the Work;
+  (b) fork the Work or create derivative works based on it;
+  (c) modify, adapt, translate, or build upon the Work;
+  (d) distribute, publish, sublicense, sell, rent, or lease the Work;
+  (e) use the Work, in whole or in part, in any product, project, service,
+      research, or commercial or non-commercial activity;
+  (f) remove, alter, or obscure this license or any copyright notice.
+
+The act of cloning or forking this repository through any platform mechanism
+(including a hosting provider's "Fork" or "Clone" feature) does NOT confer any
+of the rights withheld above, and any subsequent use, copying, modification, or
+distribution of the resulting copy is prohibited without written permission.
+
+--------------------------------------------------------------------------------
+2. REQUESTING PERMISSION
+--------------------------------------------------------------------------------
+To request any right not granted by this license, contact the Author at:
+
+  Radu Arseni - radu.carseni@gmail.com
+
+Any grant of permission must be in writing and signed (electronically or
+otherwise) by the Author to be valid. Permission, if granted, may be limited in
+scope, duration, and purpose at the Author's sole discretion.
+
+--------------------------------------------------------------------------------
+3. AUTHORSHIP AND PRIORITY
+--------------------------------------------------------------------------------
+The Author asserts authorship and ownership of the Work. The version-control
+history of this repository, including commit timestamps, constitutes evidence of
+the Author's creation and priority. Nothing in this license shall be construed
+as transferring or waiving any copyright, moral right, or other right of the
+Author.
+
+--------------------------------------------------------------------------------
+4. NO WARRANTY
+--------------------------------------------------------------------------------
+THE WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE LIABLE
+FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE WORK OR THE
+USE OR OTHER DEALINGS IN THE WORK.
+
+--------------------------------------------------------------------------------
+5. RESERVATION
+--------------------------------------------------------------------------------
+All rights not expressly granted herein are reserved by the Author.
+
+================================================================================
