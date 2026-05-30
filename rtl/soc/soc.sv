@@ -1,3 +1,4 @@
+`include "soc_map.vh"
 // =============================================================================
 // PHANTOM-32  ──  SoC Top-Level  (Lattice ECP5, ULX3S 85K)
 // =============================================================================
@@ -148,7 +149,7 @@ module soc (
     always_comb begin
       uart_tx_valid = 1'b0;
       uart_tx_byte  = 8'd0;
-      if (periph_we && (periph_addr == 32'h80002000)) begin
+      if (periph_we && (periph_addr == `SOC_UART_TX_ADDR)) begin
         uart_tx_valid = 1'b1;
         // Route the lowest active byte lane to the UART shift register.
         if      (periph_be[0]) uart_tx_byte = periph_wdata[7:0];
@@ -159,11 +160,11 @@ module soc (
     end
 
     // ── CLINT  @  0x8001_0000  (64 KB region, SiFive-standard offsets) ───────
-    assign clint_sel = (periph_addr[31:16] == 16'h8001);
+    assign clint_sel = (periph_addr[31:16] == `SOC_CLINT_SEL_HI);
 
     clint #(
-      .CLK_HZ  (50_000_000),
-      .TICK_HZ (1_000_000)
+      .CLK_HZ  (`SOC_CPU_CLK_HZ),
+      .TICK_HZ (`SOC_CLINT_TICK_HZ)
     ) u_clint (
       .clk     (cpu_clk),
       .resetn  (cpu_resetn),
@@ -199,7 +200,7 @@ module soc (
     /* verilator lint_on  UNUSEDSIGNAL */
 
     uart_tx #(
-      .CLKS_PER_BIT (434)
+      .CLKS_PER_BIT (`SOC_UART_CLKS_PER_BIT)
     ) u_uart_tx (
       .clk      (cpu_clk),
       .resetn   (cpu_resetn),

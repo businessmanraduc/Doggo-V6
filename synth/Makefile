@@ -3,7 +3,7 @@
 # =============================================================================
 # Target board : ULX3S 85K  (Lattice ECP5 LFE5U-85F-6BG381C)
 # Toolchain    : Yosys + nextpnr-ecp5 + prjtrellis + openFPGALoader
-# Top module   : soc  (soc/soc.sv)
+# Top module   : soc  (rtl/soc/soc.sv)
 #
 # Usage:
 #   make               - compile program, synthesise, place-and-route
@@ -27,31 +27,30 @@ LOADER   = openFPGALoader
 GCC_FLAGS = -march=rv32imc_zicsr -mabi=ilp32 -nostdlib -Ttext 0x0
 
 # ── Source files ──────────────────────────────────────────────────────────────
-CPU_FILES = ../cpu_files
-CORE      = $(CPU_FILES)/core
-SOC       = $(CPU_FILES)/soc
+RTL  = ../rtl
+CORE = $(RTL)/core
+SOC  = $(RTL)/soc
 
-# Listed in dependency order (no top-level `include ordering issues)
 SV_SOURCES = \
-  $(CORE)/alu.sv             \
-  $(CORE)/regfile.sv         \
-  $(CORE)/csr-regfile.sv     \
-  $(CORE)/fast-decode.sv     \
-  $(CORE)/control-unit.sv    \
-  $(CORE)/imm-generator.sv   \
-  $(CORE)/forwarding-unit.sv \
-  $(CORE)/hazard-unit.sv     \
-  $(CORE)/branch-eval.sv     \
-  $(CORE)/branch-target.sv   \
-  $(CORE)/trap-unit.sv       \
-	$(CORE)/interrupt-unit.sv  \
-  $(CORE)/muldiv-unit.sv		 \
-	$(CORE)/pht.sv             \
-  $(CORE)/btb.sv             \
-  $(CORE)/phantom-core.sv    \
-  $(SOC)/periph/uart-tx.sv   \
-	$(SOC)/periph/clint.sv     \
-  $(SOC)/cpu.sv              \
+  $(CORE)/ex_stage/alu.sv             \
+  $(CORE)/id_stage/regfile.sv         \
+  $(CORE)/ma_stage/csr-regfile.sv     \
+  $(CORE)/if_stage/fast-decode.sv     \
+  $(CORE)/id_stage/control-unit.sv    \
+  $(CORE)/if_stage/imm-generator.sv   \
+  $(CORE)/ex_stage/forwarding-unit.sv \
+  $(CORE)/id_stage/hazard-unit.sv     \
+  $(CORE)/ex_stage/branch-eval.sv     \
+  $(CORE)/ex_stage/branch-target.sv   \
+  $(CORE)/ma_stage/trap-unit.sv       \
+  $(CORE)/ma_stage/interrupt-unit.sv  \
+  $(CORE)/ex_stage/muldiv-unit.sv     \
+  $(CORE)/if_stage/pht.sv             \
+  $(CORE)/preif_stage/btb.sv          \
+  $(CORE)/phantom-core.sv             \
+  $(SOC)/periph/uart-tx.sv            \
+  $(SOC)/periph/clint.sv              \
+  $(SOC)/cpu.sv                       \
   $(SOC)/soc.sv
 
 # ── ECP5 target ───────────────────────────────────────────────────────────────
@@ -60,8 +59,8 @@ PACKAGE  = --package CABGA381
 LPF      = ulx3s_v20.lpf
 
 # ── Output artefacts ──────────────────────────────────────────────────────────
-PROG_ELF = program.elf
-IMEM_HEX = imem.hex
+PROG_ELF   = program.elf
+IMEM_HEX   = imem.hex
 SYNTH_JSON = soc.json
 BITSTREAM  = soc.bit
 
@@ -85,9 +84,9 @@ $(IMEM_HEX): $(PROGRAM)
 synth: $(SYNTH_JSON)
 
 synth.ys: $(SV_SOURCES) $(IMEM_HEX)
-	@echo "read_verilog -sv -I$(CPU_FILES) $(SV_SOURCES)" >  synth.ys
-	@echo "synth_ecp5 -top soc -json $(SYNTH_JSON)"        >> synth.ys
- 
+	@echo "read_verilog -sv -I$(CORE) -I$(SOC) $(SV_SOURCES)" >  synth.ys
+	@echo "synth_ecp5 -top soc -json $(SYNTH_JSON)"           >> synth.ys
+
 $(SYNTH_JSON): synth.ys
 	$(YOSYS) synth.ys
 

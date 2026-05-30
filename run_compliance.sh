@@ -28,11 +28,11 @@ set -euo pipefail
 # ── Paths ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RISCV_TESTS="$SCRIPT_DIR/riscv-tests"
-PHANTOM_ENV="$SCRIPT_DIR/phantom32-env"
-TEST_ENV="$SCRIPT_DIR/test_env"
+PHANTOM_ENV="$SCRIPT_DIR/tests/compliance/env"
+TEST_ENV="$SCRIPT_DIR/tests/pipeline"
 SIM="$TEST_ENV/obj_dir/Vsim"
 HEX_TARGET="$TEST_ENV/program.hex"
-BUILD_DIR="$SCRIPT_DIR/compliance-build"
+BUILD_DIR="$SCRIPT_DIR/tests/compliance/build"
 
 GCC="riscv32-none-elf-gcc"
 OBJCOPY="riscv32-none-elf-objcopy"

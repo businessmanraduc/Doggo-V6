@@ -6,7 +6,7 @@ ECP5, targeting the ULX3S 85K board.
 PHANTOM-32 is an in-order, six-stage pipelined core built from scratch. It runs the
 full RV32I base integer set plus the M (multiply/divide) and C (compressed) extensions, handles machine-mode
 traps and interrupts, and is designed to grow - caches, SDRAM, and supervisor mode
-are on the roadmap. The microarchitecture takes after the RVCoreP-32I design and its variants, with
+are on the roadmap. The microarchitecture takes after the RVCoreP-32IC design, with
 a number of changes of its own along the way.
 
 ## What it does
@@ -36,13 +36,13 @@ pins all of it.
 
 ```sh
 # directed pipeline test
-cd current-ver/test_env && make
+cd tests/pipeline && make
 
 # full RISC-V compliance suite
-./current-ver/run_compliance.sh
+./run_compliance.sh
 
 # synthesise for the ECP5
-cd current-ver/synth && make synth
+cd synth && make synth
 ```
 
 ## Documentation

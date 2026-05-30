@@ -2,7 +2,8 @@
 *.elf
 *.hex
 sim_icarus
-current-ver/test_env/obj_dir
-current-ver/compliance-build
-current-ver/synth/soc.json
-current-ver/synth/synth.ys
+**/obj_dir
+tests/compliance/build
+synth/soc.json
+synth/synth.ys
+synth/*.bit

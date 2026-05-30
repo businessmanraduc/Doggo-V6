@@ -1,4 +1,4 @@
-`include "isa.vh"
+`include "soc_map.vh"
 // =============================================================================
 // PHANTOM-32  ──  CPU  (Core + IMEM/DMEM BSRAMs + Peripheral Bus)
 // =============================================================================
@@ -83,7 +83,7 @@ module cpu (
     // ── Address decode ───────────────────────────────────────────────────────
     // bit [31] == 1 → peripheral space. Gates BSRAM write and selects read data.
     logic  addr_is_periph;
-    assign addr_is_periph = dmem_wr_addr[31];
+    assign addr_is_periph = dmem_wr_addr[`SOC_PERIPH_SEL_BIT];
  
     // ── Peripheral bus outputs ───────────────────────────────────────────────
     assign periph_addr  = dmem_wr_addr;
@@ -119,7 +119,7 @@ module cpu (
       .dmem_rdata   (dmem_rdata),
       .irq_timer    (irq_timer),
       .irq_soft     (irq_soft),
-      .irq_ext      (irq_ext),
+      .irq_ext      (irq_ext)
     );
   // ===========================================================================
   // PHANTOM CORE
