@@ -24,7 +24,7 @@ NEXTPNR  = nextpnr-ecp5
 LOADER   = openFPGALoader
 
 # ── GCC flags ─────────────────────────────────────────────────────────────────
-GCC_FLAGS = -march=rv32ic_zicsr -mabi=ilp32 -nostdlib -Ttext 0x0
+GCC_FLAGS = -march=rv32imc_zicsr -mabi=ilp32 -nostdlib -Ttext 0x0
 
 # ── Source files ──────────────────────────────────────────────────────────────
 CPU_FILES = ../cpu_files
@@ -45,7 +45,8 @@ SV_SOURCES = \
   $(CORE)/branch-target.sv   \
   $(CORE)/trap-unit.sv       \
 	$(CORE)/interrupt-unit.sv  \
-  $(CORE)/pht.sv             \
+  $(CORE)/muldiv-unit.sv		 \
+	$(CORE)/pht.sv             \
   $(CORE)/btb.sv             \
   $(CORE)/phantom-core.sv    \
   $(SOC)/periph/uart-tx.sv   \

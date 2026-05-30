@@ -26,7 +26,8 @@ CORE_SV = 									 \
   $(CORE)/pht.sv             \
   $(CORE)/btb.sv             \
   $(CORE)/branch-eval.sv     \
-  $(CORE)/interrupt-unit.sv  \
+  $(CORE)/muldiv-unit.sv		 \
+	$(CORE)/interrupt-unit.sv  \
   $(CORE)/fast-decode.sv     \
   $(CORE)/trap-unit.sv       \
   $(CORE)/csr-regfile.sv     \
@@ -43,7 +44,7 @@ VFLAGS_COMMON = --cc --trace -Wall -Wno-DECLFILENAME -I../cpu_files
 
 GCC     = riscv32-none-elf-gcc
 OBJCOPY = riscv32-none-elf-objcopy
-GFLAGS  = -march=rv32ic_zicsr -mabi=ilp32 -nostdlib -Ttext 0x0
+GFLAGS  = -march=rv32imc_zicsr -mabi=ilp32 -nostdlib -Ttext 0x0
 
 all: run
 

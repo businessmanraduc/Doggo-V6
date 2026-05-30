@@ -1,4 +1,4 @@
-# PHANTOM-32 - RV32IC Soft Processor
+# PHANTOM-32 - RV32IMC Soft Processor
 ## Architecture Reference Document
 ### Version 1.2 - Phase III In Progress
 
@@ -30,15 +30,15 @@
 ## 1. Overview and Design Goals
 
 **PHANTOM-32** is a 32-bit soft processor targeting the **Lattice ECP5 LFE5U-85F** FPGA
-(ULX3S 85K board). It implements **RV32IC** - the RISC-V base integer ISA plus the compressed
-instruction extension - and is designed for extension with M, S-mode, and a cache hierarchy
-in later phases.
+(ULX3S 85K board). It implements **RV32IMC** - the RISC-V base integer ISA plus the integer
+multiply/divide (M) and compressed (C) extensions - and is designed for extension with S-mode
+and a cache hierarchy in later phases.
 
 ### Design Parameters
 
 | Parameter | Value |
 |-----------|-------|
-| ISA | RV32IC - full RV32I + all RV32C compressed instructions |
+| ISA | RV32IMC - full RV32I + M (multiply/divide) + all RV32C compressed instructions |
 | Pipeline | 6-stage in-order: PreIF → IF → ID → EX → MA → WB |
 | Fetch unit | Dual-port 16-bit-wide EBR, dual-PC fetch (after RVCoreP-32IC) |
 | Decoder | Parallel 16-bit and 32-bit decode - no decompressor on critical path |
@@ -53,7 +53,7 @@ in later phases.
 | Branch predictor | Gshare: PHT (8192 × 2-bit, 1 EBR) + BTB (512 × 32-bit, 1 EBR) |
 | Target FPGA | Lattice ECP5 LFE5U-85F (ULX3S 85K): 84K LUT4, 208 EBR, 156 DSP |
 | Toolchain | Yosys + nextpnr-ecp5 + prjtrellis + openFPGALoader (fully open-source) |
-| Verification | 44/44 official RISC-V compliance tests passing (39 rv32ui+uc + 5 rv32mi) |
+| Verification | 52/52 official RISC-V compliance tests passing (39 rv32ui+uc + 8 rv32um + 5 rv32mi) |
 
 ### Phase Roadmap Summary
 
@@ -61,8 +61,8 @@ in later phases.
 |-------|--------|-------|
 | I | **COMPLETE** | RV32IC base CPU, M-mode traps, 39/39 compliance |
 | II | **COMPLETE** | Fmax optimisations, BSRAM adaptation, structural cleanup |
-| III | **IN PROGRESS** | FPGA bring-up, gshare predictor, SDRAM, cache, CLINT, UART, S-mode |
-| IV | Pending | M extension (DSP), HDMI, PS/2, newlib |
+| III | **IN PROGRESS** | gshare predictor, M extension, CLINT, FPGA bring-up, SDRAM, cache, UART, S-mode |
+| IV | Pending | HDMI, PS/2, newlib |
 | V | Pending | Superscalar + limited OoO, ROB, reservation stations, LSQ |
 
 ---
@@ -536,6 +536,12 @@ Full set of RV32C: C.LWSP, C.SWSP, C.LW, C.SW, C.J, C.JAL, C.JR, C.JALR, C.BEQZ,
 C.BNEZ, C.LI, C.LUI, C.ADDI, C.ADDI16SP, C.ADDI4SPN, C.SLLI, C.SRLI, C.SRAI,
 C.ANDI, C.MV, C.ADD, C.AND, C.OR, C.XOR, C.SUB, C.NOP, C.EBREAK.
 
+### RV32M (all 8 instructions)
+
+MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU. Executed by `muldiv_unit` as a
+multi-cycle fork in EX (DSP-inferred 2-cycle multiplier, radix-2 divider); the
+front-end stalls via `ex_busy` until the result is ready.
+
 ---
 
 ## 14. Branch Prediction - Gshare Pipelined
@@ -651,6 +657,7 @@ Address decode in cpu.sv: `addr_is_periph = dmem_waddr[31]`
 | `core/hazard-unit.sv` | `hazard_unit` | ID | Load-use stall detection |
 | `core/branch-eval.sv` | `branch_eval` | EX | Conditional branch comparison (BEQ/BNE/BLT/BGE/BLTU/BGEU) |
 | `core/branch-target.sv` | `branch_target` | EX | TakenPC = `(isJALR ? rs1 : pc) + imm`; TakenPC_2 = same + imm2 |
+| `core/muldiv-unit.sv` | `muldiv_unit` | EX | RV32M multiply/divide: multi-cycle FSM, DSP 2-cycle multiplier + radix-2 divider; asserts `ex_busy` to stall the front-end |
 | `core/trap-unit.sv` | `trap_unit` | MA | Combinational: misalignment detection, trap cause/mepc/mtval, MRET |
 | `core/interrupt-unit.sv` | `interrupt_unit` | MA | Combinational: evaluate enabled+pending M-mode interrupts, priority-encode cause, inject as trap |
 | `core/pht.sv` | `pht` | PreIF/IF | Gshare PHT: 8192×2-bit EBR, XOR(BHR, PrePC) index, MA write port |
@@ -742,17 +749,26 @@ Fmax improvements and structural alignment with RVCoreP-32IC:
 - Directed verification test (6 sections: forwarding, load-use, branches, JALR, CSR) → 0x01
 - M-mode interrupts: interrupt_unit + CLINT (mtime/mtimecmp timer, msip software), verified
   end-to-end by sim/tb_irq.sv (3 timer IRQs, mcause=0x8000_0007, handler re-arm + mret)
+- Interrupt verification suite expanded: tb_irq + 4 directed tests under test_env/interrupts/
+  (timer, software/MSI, masking-while-disabled, nested-trap-safety MIE/MPIE) - all PASS.
+  Run via `make run-irq IRQ_TEST=<name>` or `make run-irq-all`
 - Branch predictor robustness: fast_decoder `is_branch_jump` + BTB valid bit gate `pred_taken`
   so non-branches can never be predicted taken; `branch_miss` now honours `ex_predMiss` for any
   instruction (backstop for direct-mapped alias eviction)
-- First ECP5 synthesis clean: Yosys synth_ecp5 builds soc.json (0 problems, no latches) -
-  ~4% LUT, ~2% FF, 10/208 EBR, 1 PLL
+- Synthesis flow complete and verified: synth/Makefile drives ELF→imem.hex (objcopy -O verilog,
+  no separate converter script needed) → Yosys synth_ecp5 → nextpnr-ecp5 P&R → openFPGALoader.
+  `make synth` builds soc.json clean (0 problems, no latches) - ~4% LUT, ~2% FF, 10/208 EBR, 1 PLL
+- shell.nix provides the full open-source ECP5 chain (yosys, nextpnr, trellis, openFPGALoader)
+  plus verilator, gtkwave, riscv32 gcc - reproducible dev environment
 - test_env reorganised into core/ and interrupts/ subdirectories
+- RV32M (M extension) complete: muldiv-unit.sv - DSP-inferred 2-cycle multiplier + radix-2
+  restoring divider with spec-exact divide-by-zero / INT_MIN÷-1 handling, wired as a multi-cycle
+  `ex_busy` fork-join in EX (front-end + ID/EX hold, EX/MA bubble, operands latched at start).
+  Core is now **RV32IMC**; rv32um suite added → **52/52 compliance** (39 rv32ui+uc + 8 rv32um + 5 rv32mi)
 
-**Remaining:**
-- Write programs/bin2imem_hex.py (ELF → imem.hex converter)
-- Add ECP5 synthesis tools to shell.nix
-- First FPGA bring-up: place-and-route (nextpnr) + UART "Hello World" on ULX3S 85K
+**Remaining (gated on ULX3S 85K board - currently in delivery):**
+- `make synth` is the verified ceiling until the board arrives; place-and-route, bitstream
+  generation, flashing, and on-hardware UART "Hello World" are ready but untested on silicon
 - SDRAM controller (32 MB on ULX3S)
 - I-cache and D-cache (EBR as cache, SDRAM as backing store)
 - Full UART with TX FIFO + RX path
@@ -760,7 +776,7 @@ Fmax improvements and structural alignment with RVCoreP-32IC:
 
 ### Phase IV
 
-M extension (DSP), HDMI, PS/2, newlib port.
+HDMI, PS/2, newlib port.
 
 ### Phase V
 
@@ -769,5 +785,5 @@ multiple execution units, 2-wide fetch/decode, ROB-based bypass network.
 
 ---
 
-*Version 1.3. Reflects Phase I + Phase II complete, Phase III in progress (gshare done and debugged, 44/44 compliance, FPGA bring-up next).
+*Version 1.3. Reflects Phase I + Phase II complete, Phase III in progress (gshare done and debugged, M extension done (52/52 compliance), interrupts verified, synthesis flow clean - on-board bring-up pending hardware delivery).
 Update this document before modifying RTL - accurate architecture documentation is a Phase V prerequisite.*

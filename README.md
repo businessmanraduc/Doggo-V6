@@ -1,17 +1,17 @@
 # PHANTOM-32
 
-A 32-bit RISC-V soft processor (RV32IC) written in SystemVerilog for the Lattice
+A 32-bit RISC-V soft processor (RV32IMC) written in SystemVerilog for the Lattice
 ECP5, targeting the ULX3S 85K board.
 
 PHANTOM-32 is an in-order, six-stage pipelined core built from scratch. It runs the
-full RV32I base integer set plus the C compressed extension, handles machine-mode
+full RV32I base integer set plus the M (multiply/divide) and C (compressed) extensions, handles machine-mode
 traps and interrupts, and is designed to grow - caches, SDRAM, and supervisor mode
-are on the roadmap. The microarchitecture takes after the RVCoreP-32IC design, with
+are on the roadmap. The microarchitecture takes after the RVCoreP-32I design and its variants, with
 a number of changes of its own along the way.
 
 ## What it does
 
-- Full RV32IC: every base integer instruction and every compressed instruction
+- Full RV32IMC: every base integer, multiply/divide, and compressed instruction
 - Six-stage in-order pipeline - PreIF, IF, ID, EX, MA, WB
 - Dual-port fetch with two program counters, so a 32-bit instruction that straddles
   a fetch boundary costs nothing extra
@@ -23,8 +23,8 @@ a number of changes of its own along the way.
 
 ## Status
 
-The core is complete in simulation and passes all 44 RISC-V architectural compliance
-tests (39 rv32ui/rv32uc and 5 rv32mi). Synthesis through Yosys is clean. On-board
+The core is complete in simulation and passes all 52 RISC-V architectural compliance
+tests (39 rv32ui/rv32uc, 8 rv32um, and 5 rv32mi). Synthesis through Yosys is clean. On-board
 bring-up - place-and-route, bitstream, and UART output on real hardware - is the next
 step, waiting on the board itself.
 
@@ -49,7 +49,7 @@ cd current-ver/synth && make synth
 
 The full microarchitecture - pipeline stages, hazard handling, the branch predictor,
 and every module and pipeline register - is written up in
-[`PHANTOM32_Architecture.md`](./PHANTOM32_Architecture.md).
+[`PHANTOM32_Architecture.md`](./docs/PHANTOM32_Architecture.md).
 
 ---
 

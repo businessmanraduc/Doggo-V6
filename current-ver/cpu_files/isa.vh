@@ -218,8 +218,8 @@
 `define CSR_VAL_MARCHID    32'h0000_0000
 `define CSR_VAL_MIMPID     32'h0000_0001   // PHANTOM-32 revision 1
 `define CSR_VAL_MHARTID    32'h0000_0000   // single hart
-// misa: MXL=01 (32-bit), Extensions = I (bit 8) + C (bit 2) = 0x104
-`define CSR_VAL_MISA       32'h4000_0104
+// misa: MXL=01 (32-bit), Extensions = I (bit 8) + M (bit 12) + C (bit 2) = 0x1104
+`define CSR_VAL_MISA       32'h4000_1104
 
 
 // =============================================================================

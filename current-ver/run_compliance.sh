@@ -37,7 +37,7 @@ BUILD_DIR="$SCRIPT_DIR/compliance-build"
 GCC="riscv32-none-elf-gcc"
 OBJCOPY="riscv32-none-elf-objcopy"
 
-MARCH="-march=rv32ic_zicsr"
+MARCH="-march=rv32imc_zicsr"
 MABI="-mabi=ilp32"
 
 # ── Tests to run ─────────────────────────────────────────────────────────────
@@ -57,6 +57,12 @@ RV32UI_TESTS=(
 # rv32uc: compressed instructions
 RV32UC_TESTS=(
   rvc
+)
+
+# rv32um: M extension (multiply / divide)
+RV32UM_TESTS=(
+  mul mulh mulhsu mulhu
+  div divu rem remu
 )
 
 # rv32mi: machine-mode infrastructure  (traps, CSRs, misalignment)
@@ -186,6 +192,12 @@ echo ""
 echo "[ rv32uc - compressed instruction tests ]"
 for t in "${RV32UC_TESTS[@]}"; do
   run_test "rv32uc" "$t"
+done
+
+echo ""
+echo "[ rv32um - multiply / divide tests ]"
+for t in "${RV32UM_TESTS[@]}"; do
+  run_test "rv32um" "$t"
 done
 
 echo ""

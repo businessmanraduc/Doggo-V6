@@ -102,6 +102,7 @@ module phantom_core (
     logic [31:0]      id_ex_imm2;
     logic             id_ex_isJump;     // 1 => current instruction is a jump
     logic             id_ex_isJalr;     // 1 => current instruction is a jalr
+    logic             id_ex_isMulDiv;   // 1 => current instruction is RV32M
     logic             id_ex_isBranch;   // 1 => current instruction is a branch
     logic [2:0]       id_ex_branchType; // type of decoded branch
 
@@ -230,6 +231,7 @@ module phantom_core (
     // ── ID: control_unit outputs ─────────────────────────────────────────────
     logic             id_isJump;
     logic             id_isJalr;
+    logic             id_isMulDiv;
     logic             id_isBranch;
     logic [2:0]       id_branchType;
     logic [3:0]       id_aluOp;
@@ -288,6 +290,11 @@ module phantom_core (
     logic [31:0]      alu_rhs;
     logic [31:0]      alu_result;
     logic [31:0]      ex_dmem_addr;
+    logic [31:0]      muldiv_result;
+    logic             muldiv_done;      // 1 = muldiv result valid
+    logic             muldiv_active;    // 1 = muldiv instruction inside EX
+    logic             ex_busy;          // 1 = stall (muldiv not finished)
+    logic [31:0]      ex_result;        // EX writeback value (ALU or muldiv)
 
     // ── EX: CSR read ─────────────────────────────────────────────────────────
     /* verilator lint_off UNUSEDSIGNAL */
@@ -358,7 +365,7 @@ module phantom_core (
     always_ff @(posedge clk) begin
       if (!resetn || branch_miss || id_branch_miss) begin
         r_bhr <= '0;
-      end else if (!stall) begin
+      end else if (!stall && !ex_busy) begin
         r_bhr <= {r_bhr[BHR_W-2:0], pred_taken};
       end
     end
@@ -407,7 +414,7 @@ module phantom_core (
         r_predpc    <= 32'd0;
         r_predpc2   <= 32'd2;
         r_predvalid <= 1'b0;
-      end else if (!stall) begin
+      end else if (!stall && !ex_busy) begin
         r_predpc    <= btb_rdata;
         r_predpc2   <= btb_rdata + 32'd2;
         r_predvalid <= btb_valid;
@@ -456,6 +463,7 @@ module phantom_core (
         (branch_miss):    begin next_pc = truepc;        next_pc2 = truepc2_wire;          end
         (id_branch_miss): begin next_pc = id_truepc;     next_pc2 = id_truepc2_wire;       end
         (stall):          begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
+        (ex_busy):        begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
         (pred_taken):     begin next_pc = r_predpc;      next_pc2 = r_predpc2;             end
         default:          begin next_pc = pc_inc_seq;    next_pc2 = pc_inc_seq2;           end
       endcase
@@ -497,6 +505,7 @@ module phantom_core (
 
     assign flush_if_id = branch_miss || id_branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
+      if (!ex_busy) begin
       if_id_pc        <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc;
       if_id_pc2       <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc2;
       if_id_pc4       <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc4;
@@ -516,6 +525,7 @@ module phantom_core (
       if_id_rs2Index  <= (!resetn || flush_if_id || stall) ? 5'd0       : fd_rs2Index;
       if_id_rdIndex   <= (!resetn || flush_if_id || stall) ? 5'd0       : fd_rdIndex;
       if_id_valid     <= (!resetn || flush_if_id || stall) ? 1'b0       : 1'b1;
+      end
     end
 
   // ===========================================================================
@@ -537,6 +547,7 @@ module phantom_core (
       .branch_type    (id_branchType),
       .is_jump        (id_isJump),
       .is_jalr        (id_isJalr),
+      .is_muldiv      (id_isMulDiv),
       .mem_read       (id_memRead),
       .mem_write      (id_memWrite),
       .mem_width      (id_memWidth),
@@ -596,7 +607,7 @@ module phantom_core (
     assign id_predMiss        = (id_branchTakenEarly != if_id_predTaken)
                              || (id_branchTakenEarly && id_targetMiss);
 
-    assign id_branch_miss = !trap_en && !mret_en && !branch_miss
+    assign id_branch_miss = !trap_en && !mret_en && !branch_miss && !ex_busy
       && id_branchOpsReady && id_predMiss;
 
   // ===========================================================================
@@ -610,6 +621,7 @@ module phantom_core (
 
     assign flush_id_ex = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
+      if (!ex_busy) begin
       id_ex_pc          <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc;
       id_ex_pc2         <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc2;
       id_ex_pc4         <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc4;
@@ -626,6 +638,7 @@ module phantom_core (
       id_ex_imm2        <= (!resetn || flush_id_ex) ? 32'd2      : if_id_imm2;
       id_ex_isJump      <= (!resetn || flush_id_ex) ? 1'b0       : id_isJump;
       id_ex_isJalr      <= (!resetn || flush_id_ex) ? 1'b0       : id_isJalr;
+      id_ex_isMulDiv    <= (!resetn || flush_id_ex) ? 1'b0       : id_isMulDiv;
       id_ex_isBranch    <= (!resetn || flush_id_ex) ? 1'b0       : id_isBranch;
       id_ex_branchType  <= (!resetn || flush_id_ex) ? 3'b000     : id_branchType;
 
@@ -652,6 +665,7 @@ module phantom_core (
       id_ex_isMRET      <= (!resetn || flush_id_ex) ? 1'b0       : id_isMRET;
       id_ex_isIllegal   <= (!resetn || flush_id_ex) ? 1'b0       : id_isIllegal;
       id_ex_valid       <= (!resetn || flush_id_ex) ? 1'b0       : if_id_valid;
+      end
     end
 
   // ===========================================================================
@@ -709,6 +723,23 @@ module phantom_core (
       .op     (id_ex_aluOp),
       .result (alu_result)
     );
+
+    // ── muldiv_unit (RV32M, multi-cycle fork in EX) ──────────────────────────
+    assign muldiv_active = id_ex_isMulDiv && id_ex_valid;
+    assign ex_busy       = resetn && muldiv_active && !muldiv_done;
+
+    muldiv_unit u_muldiv (
+      .clk      (clk),
+      .resetn   (resetn),
+      .valid_in (muldiv_active),
+      .opcode   (id_ex_instr[14:12]),
+      .a        (fwd_rs1Value),
+      .b        (fwd_rs2Value),
+      .result   (muldiv_result),
+      .done     (muldiv_done)
+    );
+
+    assign ex_result = id_ex_isMulDiv ? muldiv_result : alu_result;
 
     // ── branch_eval ──────────────────────────────────────────────────────────
     branch_eval u_beval (
@@ -796,7 +827,7 @@ module phantom_core (
       ex_ma_rdNonZero   <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_rdNonZero;
       ex_ma_rs1Fwd      <= (!resetn || flush_ex_ma) ? 32'd0      : fwd_rs1Value;
       ex_ma_rs2Fwd      <= (!resetn || flush_ex_ma) ? 32'd0      : fwd_rs2Value;
-      ex_ma_aluResult   <= (!resetn || flush_ex_ma) ? 32'd0      : alu_result;
+      ex_ma_aluResult   <= (!resetn || flush_ex_ma) ? 32'd0      : ex_result;
       ex_ma_dmemAddr    <= (!resetn || flush_ex_ma) ? 32'd0      : ex_dmem_addr;
  
       ex_ma_memRead     <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_memRead;

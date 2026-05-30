@@ -41,7 +41,8 @@ module control_unit (
   output logic [2:0]  branch_type,   // branch condition code → branch_eval
   output logic        is_jump,       // unconditional jump  (JAL / JALR family)
   output logic        is_jalr,       // target = rs1+imm  (JALR / C.JALR / C.JR)
- 
+  output logic        is_muldiv,     // RV32M instruction
+
   // ── MA stage control signals ──────────────────────────────────────────────
   output logic        mem_read,      // 1 = load from data memory
   output logic        mem_write,     // 1 = store to data memory
@@ -82,7 +83,7 @@ module control_unit (
       reg_write   = 1'b0;     wb_sel      = 2'b00;
       mem_read    = 1'b0;     mem_write   = 1'b0;    mem_width   = `WIDTH_W;
       is_branch   = 1'b0;     branch_type = 3'b000;
-      is_jump     = 1'b0;     is_jalr     = 1'b0;
+      is_jump     = 1'b0;     is_jalr     = 1'b0;    is_muldiv   = 1'b0;
       csr_en      = 1'b0;     csr_op      = 2'b00;
       csr_use_imm = 1'b0;     csr_addr    = 12'h000;
       is_ecall    = 1'b0;     is_ebreak   = 1'b0;    is_mret     = 1'b0;
@@ -283,20 +284,26 @@ module control_unit (
               endcase
             end
             `OP_ARITH_R: begin
-              alu_src_b = 1'b0; reg_write = 1'b1;
-              case (func3)
-                `F3_ADD:   alu_op = func7b5 ? `ALU_SUB : `ALU_ADD;
-                `F3_SLL:   alu_op = `ALU_SLL;
-                `F3_SLT:   alu_op = `ALU_SLT;
-                `F3_SLTU:  alu_op = `ALU_SLTU;
-                `F3_XOR:   alu_op = `ALU_XOR;
-                `F3_SRL:   alu_op = func7b5 ? `ALU_SRA : `ALU_SRL;
-                `F3_OR:    alu_op = `ALU_OR;
-                `F3_AND:   alu_op = `ALU_AND;
-                default: begin
-                  reg_write = 1'b0; is_illegal = 1'b1;
-                end
-              endcase
+              if (instrWord[31:25] == 7'b0000001) begin
+                is_muldiv = 1'b1; reg_write = 1'b1;
+              end else if (instrWord[31:25] == `F7_NORMAL || instrWord[31:25] == `F7_ALT) begin
+                alu_src_b = 1'b0; reg_write = 1'b1;
+                case (func3)
+                  `F3_ADD:   alu_op = func7b5 ? `ALU_SUB : `ALU_ADD;
+                  `F3_SLL:   alu_op = `ALU_SLL;
+                  `F3_SLT:   alu_op = `ALU_SLT;
+                  `F3_SLTU:  alu_op = `ALU_SLTU;
+                  `F3_XOR:   alu_op = `ALU_XOR;
+                  `F3_SRL:   alu_op = func7b5 ? `ALU_SRA : `ALU_SRL;
+                  `F3_OR:    alu_op = `ALU_OR;
+                  `F3_AND:   alu_op = `ALU_AND;
+                  default: begin
+                    reg_write = 1'b0; is_illegal = 1'b1;
+                  end
+                endcase
+              end else begin
+                is_illegal = 1'b1;
+              end
             end
             `OP_SYSTEM:  begin
               case (func3)
