@@ -4,23 +4,22 @@
 # =============================================================================
 #
 # Expects the Verilator simulation binary to already be built:
-#   cd test_env && make && cd ..
+#   cd tests/pipeline && make && cd ../..
 #
 # Directory layout:
-#   current-ver/
-#   ├── test_env/
-#   │   ├── core/                ← pipeline/ISA test sources (program.S, sim_main.cpp)
-#   │   ├── interrupts/          ← timer-IRQ test sources (tb_irq driver + program)
-#   │   ├── program.hex          ← overwritten for each test (built from core/program.S)
-#   │   └── obj_dir/Vsim         ← pre-built Verilator simulation binary (tb_core)
-#   ├── phantom32-env/
-#   │   ├── riscv_test.h
-#   │   └── phantom32_link.ld
-#   ├── riscv-tests/             ← cloned from riscv-software-src/riscv-tests
-#   │   ├── isa/rv32ui/*.S
-#   │   ├── isa/rv32uc/*.S
+#   phantom32/                       ← repo root (this script lives here)
+#   ├── rtl/                         ← CPU RTL (core by pipeline stage + soc)
+#   ├── tests/
+#   │   ├── pipeline/                ← tb_core build (program.S, sim_main.cpp, Makefile)
+#   │   │   ├── program.hex          ← overwritten for each test (built per run)
+#   │   │   └── obj_dir/Vsim         ← pre-built Verilator simulation binary (tb_core)
+#   │   └── compliance/
+#   │       ├── env/                 ← riscv_test.h, phantom32_link.ld
+#   │       └── build/               ← per-test .elf / .hex (generated)
+#   ├── riscv-tests/                 ← submodule: riscv-software-src/riscv-tests
+#   │   ├── isa/rv32ui|rv32uc|rv32um|rv32mi/*.S
 #   │   └── isa/macros/scalar/test_macros.h
-#   └── run_compliance.sh        ← this script
+#   └── run_compliance.sh            ← this script
 # =============================================================================
 
 set -euo pipefail

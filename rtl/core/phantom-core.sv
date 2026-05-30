@@ -51,8 +51,8 @@ module phantom_core (
   // ===========================================================================
 
     // ── IF/PreIF ─────────────────────────────────────────────────────────────
-    logic [BHR_W-1:0]   r_bhr;          // Branch History Register
-    logic [31:0]        r_prepc;        // PrePC register fed by NextPC
+    logic [BHR_W-1:0] r_bhr;            // Branch History Register
+    logic [31:0]      r_prepc;          // PrePC register fed by NextPC
 
     // ── PreIF/IF ─────────────────────────────────────────────────────────────
     logic [31:0]      r_pc;             // PC register
