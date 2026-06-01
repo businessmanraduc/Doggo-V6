@@ -68,6 +68,7 @@ module phantom_core (
     logic [31:0]      if_id_pc;         // PC value for IF's instruction
     logic [31:0]      if_id_pc2;
     logic [31:0]      if_id_pc4;
+    logic [31:0]      if_id_pc6;
 
     logic [31:0]      if_id_predpc;     // BTB predicted target for PC
     logic             if_id_predTaken;  // prediction taken flag
@@ -89,6 +90,7 @@ module phantom_core (
     logic [31:0]      id_ex_pc;         // PC value for ID's instruction
     logic [31:0]      id_ex_pc2;
     logic [31:0]      id_ex_pc4;
+    logic [31:0]      id_ex_pc6;
 
     logic [31:0]      id_ex_predpc;
     logic             id_ex_predTaken;
@@ -259,8 +261,11 @@ module phantom_core (
     logic             id_branchOpsReady;
     logic             id_branchTakenEarly;
     logic [31:0]      id_targetAddrEarly;
+    logic [31:0]      id_targetAddrEarly2;
     logic [31:0]      id_belowpc;
+    logic [31:0]      id_belowpc2;
     logic [31:0]      id_truepc;
+    logic [31:0]      id_truepc2;
     logic             id_ex_rsMatch;
     logic             id_ma_rsMatch;
     logic             id_targetMiss;
@@ -275,7 +280,9 @@ module phantom_core (
     logic [31:0]      ex_targetAddr2;
     /* verilator lint_on  UNUSEDSIGNAL */
     logic [31:0]      belowpc;
+    logic [31:0]      belowpc2;
     logic [31:0]      truepc;
+    logic [31:0]      truepc2;
     logic             ex_targetMiss;
     logic             ex_predMiss;
 
@@ -448,8 +455,6 @@ module phantom_core (
     logic [31:0] pc_inc_seq2;     assign pc_inc_seq2     = if_isCompressed ? r_pc4 : r_pc6;
     logic [31:0] csr_mtvec2;      assign csr_mtvec2      = csr_mtvec + 32'd2;
     logic [31:0] csr_mepc2;       assign csr_mepc2       = csr_mepc  + 32'd2;
-    logic [31:0] truepc2_wire;    assign truepc2_wire    = truepc    + 32'd2;
-    logic [31:0] id_truepc2_wire; assign id_truepc2_wire = id_truepc + 32'd2;
 
     // ── NextPC Control Logic ─────────────────────────────────────────────────
     always_comb begin
@@ -460,8 +465,8 @@ module phantom_core (
         (!resetn):        begin next_pc = `RESET_VECTOR; next_pc2 = `RESET_VECTOR + 32'd2; end
         (trap_en):        begin next_pc = csr_mtvec;     next_pc2 = csr_mtvec2;            end
         (mret_en):        begin next_pc = csr_mepc;      next_pc2 = csr_mepc2;             end
-        (branch_miss):    begin next_pc = truepc;        next_pc2 = truepc2_wire;          end
-        (id_branch_miss): begin next_pc = id_truepc;     next_pc2 = id_truepc2_wire;       end
+        (branch_miss):    begin next_pc = truepc;        next_pc2 = truepc2;               end
+        (id_branch_miss): begin next_pc = id_truepc;     next_pc2 = id_truepc2;            end
         (stall):          begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
         (ex_busy):        begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
         (pred_taken):     begin next_pc = r_predpc;      next_pc2 = r_predpc2;             end
@@ -509,6 +514,7 @@ module phantom_core (
       if_id_pc        <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc;
       if_id_pc2       <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc2;
       if_id_pc4       <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc4;
+      if_id_pc6       <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc6;
 
       if_id_predpc    <= (!resetn || flush_if_id || stall) ? 32'd0      : r_predpc;
       if_id_predTaken <= (!resetn || flush_if_id || stall) ? 1'b0       : pred_taken;
@@ -599,13 +605,24 @@ module phantom_core (
       .branch_taken (id_branchTakenEarly)
     );
 
-    assign id_targetAddrEarly = if_id_pc + if_id_imm;
-    assign id_belowpc         = if_id_isComp ? if_id_pc2 : if_id_pc4;
-    assign id_truepc          = id_branchTakenEarly ? id_targetAddrEarly : id_belowpc;
+    branch_target u_btarget_id (
+      .pc            (if_id_pc),
+      .rs1_data      (32'd0),
+      .immediate     (if_id_imm),
+      .immediate_2   (if_id_imm2),
+      .is_jalr       (1'd0),
+      .target_addr   (id_targetAddrEarly),
+      .target_addr_2 (id_targetAddrEarly2)
+    );
 
-    assign id_targetMiss      = (id_targetAddrEarly  != if_id_predpc);
-    assign id_predMiss        = (id_branchTakenEarly != if_id_predTaken)
-                             || (id_branchTakenEarly && id_targetMiss);
+    assign id_belowpc          = if_id_isComp ? if_id_pc2 : if_id_pc4;
+    assign id_belowpc2         = if_id_isComp ? if_id_pc4 : if_id_pc6;
+    assign id_truepc           = id_branchTakenEarly ? id_targetAddrEarly  : id_belowpc;
+    assign id_truepc2          = id_branchTakenEarly ? id_targetAddrEarly2 : id_belowpc2;
+
+    assign id_targetMiss       = (id_targetAddrEarly  != if_id_predpc);
+    assign id_predMiss         = (id_branchTakenEarly != if_id_predTaken)
+                              || (id_branchTakenEarly && id_targetMiss);
 
     assign id_branch_miss = !trap_en && !mret_en && !branch_miss && !ex_busy
       && id_branchOpsReady && id_predMiss;
@@ -625,6 +642,7 @@ module phantom_core (
       id_ex_pc          <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc;
       id_ex_pc2         <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc2;
       id_ex_pc4         <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc4;
+      id_ex_pc6         <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc6;
 
       id_ex_predpc      <= (!resetn || flush_id_ex) ? 32'd0      : if_id_predpc;
       id_ex_predTaken   <= (!resetn || flush_id_ex) ? 1'b0       : if_id_predTaken;
@@ -768,8 +786,10 @@ module phantom_core (
     assign branch_miss    = !trap_en && !mret_en
       && !id_ex_earlySolve && ex_predMiss;
 
-    assign belowpc = id_ex_isComp   ? id_ex_pc2     : id_ex_pc4;
-    assign truepc  = ex_branchTaken ? ex_targetAddr : belowpc;
+    assign belowpc  = id_ex_isComp   ? id_ex_pc2      : id_ex_pc4;
+    assign belowpc2 = id_ex_isComp   ? id_ex_pc4      : id_ex_pc6;
+    assign truepc   = ex_branchTaken ? ex_targetAddr  : belowpc;
+    assign truepc2  = ex_branchTaken ? ex_targetAddr2 : belowpc2;
 
     assign ex_csrWrGuard = (id_ex_csrOp == `CSR_OP_RW) || (id_ex_csrUseImm
       ? (|id_ex_instr[19:15])
