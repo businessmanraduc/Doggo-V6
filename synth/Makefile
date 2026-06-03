@@ -7,20 +7,22 @@
 #
 # Usage:
 #   make               - compile program, synthesise, place-and-route
-#   make prog          - compile + synth + P&R + flash to board
+#   make prog          - build + load to FPGA SRAM
+#   make flash         - build + write to SPI flash
 #   make imem          - compile program only → imem.hex  (no synth)
 #   make clean         - remove all generated files
 #
 # PROGRAM: path to the .S source to load into IMEM.
 # =============================================================================
 
-PROGRAM ?= ../programs/iWasTheFirst.S
+PROGRAM ?= ../programs/firstFPGAProgram.S
 
 # ── Toolchain ─────────────────────────────────────────────────────────────────
 GCC      = riscv32-none-elf-gcc
 OBJCOPY  = riscv32-none-elf-objcopy
 YOSYS    = yosys
 NEXTPNR  = nextpnr-ecp5
+ECPPACK  = ecppack
 LOADER   = openFPGALoader
 
 # ── GCC flags ─────────────────────────────────────────────────────────────────
@@ -62,13 +64,14 @@ LPF      = ulx3s_v20.lpf
 PROG_ELF   = program.elf
 IMEM_HEX   = imem.hex
 SYNTH_JSON = soc.json
+SYNTH_CFG  = soc.config
 BITSTREAM  = soc.bit
 
 # =============================================================================
 # TARGETS
 # =============================================================================
 
-.PHONY: all imem synth pnr prog clean
+.PHONY: all imem synth pnr prog flash clean
 
 all: $(BITSTREAM)
 
@@ -94,15 +97,20 @@ $(SYNTH_JSON): synth.ys
 pnr: $(BITSTREAM)
 
 $(BITSTREAM): $(SYNTH_JSON) $(LPF)
-	$(NEXTPNR) $(DEVICE) $(PACKAGE) \
+	$(NEXTPNR) $(DEVICE) $(PACKAGE)  \
 	           --json $(SYNTH_JSON)  \
 	           --lpf  $(LPF)         \
-	           --bitstream $(BITSTREAM)
+             --timing-allow-fail   \
+             --textcfg $(SYNTH_CFG)
+	$(ECPPACK) $(SYNTH_CFG) $(BITSTREAM)
 
-# ── Flash to board ────────────────────────────────────────────────────────────
 prog: $(BITSTREAM)
 	$(LOADER) -b ulx3s $(BITSTREAM)
 
+flash: $(BITSTREAM)
+	$(LOADER) -b ulx3s -f --unprotect-flash $(BITSTREAM)
+
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 clean:
-	rm -f $(PROG_ELF) $(IMEM_HEX) $(SYNTH_JSON) $(BITSTREAM)
+	rm -f $(PROG_ELF) $(IMEM_HEX) $(SYNTH_JSON) $(SYNTH_CFG) $(BITSTREAM)
+

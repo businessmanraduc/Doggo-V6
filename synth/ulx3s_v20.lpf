@@ -1,0 +1,36 @@
+# =============================================================================
+# PHANTOM-32  --  ULX3S v3.0.8 (ECP5 LFE5U-85F) pin constraints
+# =============================================================================
+# Maps the three top-level soc.sv ports to physical pins.
+#
+#   clk_25  -> clk_25mhz, 25 MHz onboard oscillator                    (G2)
+#   uart_tx -> ftdi_rxd : FPGA TX -> FTDI -> host USB serial           (L4)
+#   resetn  -> btn[0]   : PWR button, idles HIGH (pull-up), active-low (D6)
+# =============================================================================
+
+LOCATE COMP "clk_25" SITE "G2";
+IOBUF  PORT "clk_25" PULLMODE=NONE IO_TYPE=LVCMOS33;
+FREQUENCY PORT "clk_25" 25 MHZ;
+
+LOCATE COMP "uart_tx" SITE "L4";
+IOBUF  PORT "uart_tx" PULLMODE=UP IO_TYPE=LVCMOS33 DRIVE=4;
+
+LOCATE COMP "resetn" SITE "D6";
+IOBUF  PORT "resetn" PULLMODE=UP IO_TYPE=LVCMOS33;
+
+LOCATE COMP "led[0]" SITE "B2";
+IOBUF  PORT "led[0]" IO_TYPE=LVCMOS33 DRIVE=4;
+LOCATE COMP "led[1]" SITE "C2";
+IOBUF  PORT "led[1]" IO_TYPE=LVCMOS33 DRIVE=4;
+LOCATE COMP "led[2]" SITE "C1";
+IOBUF  PORT "led[2]" IO_TYPE=LVCMOS33 DRIVE=4;
+LOCATE COMP "led[3]" SITE "D2";
+IOBUF  PORT "led[3]" IO_TYPE=LVCMOS33 DRIVE=4;
+LOCATE COMP "led[4]" SITE "D1";
+IOBUF  PORT "led[4]" IO_TYPE=LVCMOS33 DRIVE=4;
+LOCATE COMP "led[5]" SITE "E2";
+IOBUF  PORT "led[5]" IO_TYPE=LVCMOS33 DRIVE=4;
+LOCATE COMP "led[6]" SITE "E1";
+IOBUF  PORT "led[6]" IO_TYPE=LVCMOS33 DRIVE=4;
+LOCATE COMP "led[7]" SITE "H3";
+IOBUF  PORT "led[7]" IO_TYPE=LVCMOS33 DRIVE=4;

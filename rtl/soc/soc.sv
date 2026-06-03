@@ -15,9 +15,10 @@
 // =============================================================================
 
 module soc (
-  input  logic clk_25,   // 25 MHz board crystal oscillator (ULX3S)
-  input  logic resetn,   // active-low board reset button
-  output logic uart_tx   // UART serial output pin (115200 8-N-1)
+  input  logic       clk_25,   // 25 MHz board crystal oscillator (ULX3S)
+  input  logic       resetn,   // active-low board reset button
+  output logic       uart_tx,  // UART serial output pin (115200 8-N-1)
+  output logic [7:0] led       // 8 onboard LEDs
 );
  
   // ===========================================================================
@@ -47,7 +48,7 @@ module soc (
       .CLKOS2_ENABLE   ("DISABLED"),
       .CLKOS3_ENABLE   ("DISABLED"),
       .FEEDBK_PATH     ("CLKOP"),
-      .CLKFB_DIV       (24)
+      .CLKFB_DIV       (2)
     ) u_pll (
       .CLKI        (clk_25),
       .CLKFB       (cpu_clk),   // internal feedback from CLKOP output
@@ -212,5 +213,28 @@ module soc (
   // ===========================================================================
   // UART TX
   // ===========================================================================
- 
+
+
+  // ===========================================================================
+  // ONBOARD LEDS
+  // ===========================================================================
+
+    logic  led_sel;
+    assign led_sel = (periph_addr == `SOC_ONBOARD_LEDS);
+
+    logic [7:0] r_led_status;
+    always_ff @(posedge cpu_clk) begin
+      if (!cpu_resetn)
+        r_led_status <= 8'd0;
+      else if (periph_we && led_sel && periph_be[0])
+        r_led_status <= periph_wdata[7:0];
+    end
+
+    assign led = r_led_status;
+
+  // ===========================================================================
+  // ONBOARD LEDS
+  // ===========================================================================
+
+
 endmodule
