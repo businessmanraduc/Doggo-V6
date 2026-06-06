@@ -17,7 +17,6 @@ test_max_val:
 test_min_val:
   bne   a1, a2, test_dir_1
   li    a0, 1
-  # no jump needed
 
 test_dir_1:
   bne   a0, a2, test_dir_0
@@ -25,9 +24,7 @@ test_dir_1:
   j     after_tests
 
 test_dir_0:
-  # no test needed, if we reach here then a0 is 0
   srli  a1, a1, 1
-  # no jump needed
 
 after_tests:
   sw    a1, 0(s0)
