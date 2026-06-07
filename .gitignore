@@ -4,6 +4,7 @@
 sim_icarus
 **/obj_dir
 tests/compliance/build
+synth/sweep_tmp
 synth/soc.json
 synth/synth.ys
 synth/*.config

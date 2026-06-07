@@ -37,12 +37,13 @@ module muldiv_unit (
 );
 
   // ── FSM states ─────────────────────────────────────────────────────────────
-  localparam logic [1:0]
-    S_IDLE = 2'd0,              // waiting for M instruction
-    S_MUL  = 2'd1,              // multiply: result ready this cycle
-    S_ITER = 2'd2,              // divide:   shift-subtract iteration
-    S_DONE = 2'd3;              // divide:   result ready this cycle
-  logic [1:0] state;
+  localparam logic [2:0]
+    S_IDLE = 3'd0,              // waiting for M instruction
+    S_MUL1 = 3'd1,              // multiply stage 1
+    S_MUL2 = 3'd2,              // multiply stage 2
+    S_ITER = 3'd3,              // divide:   shift-subtract iteration
+    S_DONE = 3'd4;              // divide:   result ready this cycle
+  logic [2:0] state;
 
   // ── Latched operands / op ─────────────────────────────────────────────────
   logic [31:0] r_a;
@@ -78,10 +79,11 @@ module muldiv_unit (
     logic signed [65:0] product; assign product = a_ext * b_ext;
     /* verilator lint_on  UNUSEDSIGNAL */
 
+    logic [63:0] product_q;
     logic [31:0] mul_result;
     assign mul_result = (r_opcode[1:0] == 2'b00)
-      ? product[31:0]           // MUL
-      : product[63:32];         // MULH
+      ? product_q[31:0]           // MUL
+      : product_q[63:32];         // MULH
 
   // ===========================================================================
   // MULTIPLIER
@@ -138,7 +140,7 @@ module muldiv_unit (
               r_b      <= b;
               r_opcode <= opcode[1:0];
               if (!opcode[2]) begin
-                state  <= S_MUL;
+                state  <= S_MUL1;
               end else begin
                 want_rem       <= opcode[1];
                 quot_sign      <= in_sign_a ^ in_sign_b;
@@ -155,8 +157,12 @@ module muldiv_unit (
             end
           end
 
-          // ── Multiply result consumed this cycle ──────────────────────────────
-          S_MUL: state <= S_IDLE;
+          // ── Multiply - 2 Stage compute + output ──────────────────────────────
+          S_MUL1: begin
+            product_q <= product[63:0];
+            state     <= S_MUL2;
+          end
+          S_MUL2: state <= S_IDLE;
 
           // ── One quotient bit per cycle ───────────────────────────────────────
           S_ITER: begin
@@ -185,11 +191,11 @@ module muldiv_unit (
   // OUTPUTS
   // ===========================================================================
 
-    assign done = (state == S_MUL) || (state == S_DONE);
+    assign done = (state == S_MUL2) || (state == S_DONE);
 
     always_comb begin
       case (state)
-        S_MUL:   result = mul_result;
+        S_MUL2:  result = mul_result;
         S_DONE:  result = div_result;
         default: result = 32'hDEADBEEF;
       endcase

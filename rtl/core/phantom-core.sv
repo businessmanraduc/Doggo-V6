@@ -77,7 +77,6 @@ module phantom_core (
 
     logic [31:0]      if_id_instr;      // full instruction word
     logic             if_id_isComp;     // 1 => current instruction is 16-bit C
-    logic [31:0]      if_id_imm;        // extracted immediate value
 
     logic [4:0]       if_id_rs1Index;   // extracted rs1 index
     logic [4:0]       if_id_rs2Index;   // extracted rs2 index
@@ -228,9 +227,6 @@ module phantom_core (
     logic             fd_isBranchJump;
     /* verilator lint_on  UNUSEDSIGNAL */
 
-    // ── IF: imm_generator outputs ────────────────────────────────────────────
-    logic [31:0]      if_imm;
-
     // ── ID: control_unit outputs ─────────────────────────────────────────────
     logic             id_isJump;
     logic             id_isJalr;
@@ -257,6 +253,9 @@ module phantom_core (
     // ── ID: regfile outputs ──────────────────────────────────────────────────
     logic [31:0]      rf_rs1Data;
     logic [31:0]      rf_rs2Data;
+
+    // ── ID: imm_generator output ─────────────────────────────────────────────
+    logic [31:0]      id_imm;
 
     // ── Scoreboard control ───────────────────────────────────────────────────
     logic             rs1_ready;        // ID rs1 operand available
@@ -479,13 +478,6 @@ module phantom_core (
       .is_branch_jump (fd_isBranchJump)
     );
 
-    // ── imm_generator ────────────────────────────────────────────────────────
-    imm_generator u_immgen (
-      .instrWord      (if_instr),
-      .is_compressed  (if_isCompressed),
-      .immediate      (if_imm)
-    );
-
   // ===========================================================================
   // IF STAGE
   // ===========================================================================
@@ -509,7 +501,6 @@ module phantom_core (
           if_id_phtOld    <= 2'b01;
           if_id_instr     <= `NOP_INSTR;
           if_id_isComp    <= 1'b0;
-          if_id_imm       <= 32'd0;
           if_id_rs1Index  <= 5'd0;
           if_id_rs2Index  <= 5'd0;
           if_id_rdIndex   <= 5'd0;
@@ -525,7 +516,6 @@ module phantom_core (
           if_id_phtOld    <= pht_rdata;
           if_id_instr     <= if_instr;
           if_id_isComp    <= if_isCompressed;
-          if_id_imm       <= if_imm;
           if_id_rs1Index  <= fd_rs1Index;
           if_id_rs2Index  <= fd_rs2Index;
           if_id_rdIndex   <= fd_rdIndex;
@@ -542,6 +532,13 @@ module phantom_core (
   // ===========================================================================
   // ID STAGE  ──  Full decode, regfile read, hazard detect
   // ===========================================================================
+
+    // ── imm_generator ────────────────────────────────────────────────────────
+    imm_generator u_immgen (
+      .instrWord      (if_id_instr),
+      .is_compressed  (if_id_isComp),
+      .immediate      (id_imm)
+    );
 
     // ── control_unit ─────────────────────────────────────────────────────────
     control_unit u_ctrl (
@@ -619,8 +616,8 @@ module phantom_core (
 
       id_ex_instr       <= (!resetn ||flush_id_ex || stall) ? `NOP_INSTR : if_id_instr;
       id_ex_isComp      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : if_id_isComp;
-      id_ex_imm         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_imm;
-      id_ex_imm2        <= (!resetn ||flush_id_ex || stall) ? 32'd2      : (if_id_imm + 32'd2);
+      id_ex_imm         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : id_imm;
+      id_ex_imm2        <= (!resetn ||flush_id_ex || stall) ? 32'd2      : (id_imm + 32'd2);
       id_ex_isJump      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isJump;
       id_ex_isJalr      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isJalr;
       id_ex_isMulDiv    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isMulDiv;
@@ -631,7 +628,7 @@ module phantom_core (
       id_ex_rs2Index    <= (!resetn ||flush_id_ex || stall) ? 5'd0       : if_id_rs2Index;
       id_ex_rdIndex     <= (!resetn ||flush_id_ex || stall) ? 5'd0       : if_id_rdIndex;
       id_ex_rs1Data     <= (!resetn ||flush_id_ex || stall) ? 32'd0      : (id_aluLHS ? if_id_pc  : rf_rs1Data);
-      id_ex_rs2Data     <= (!resetn ||flush_id_ex || stall) ? 32'd0      : (id_aluRHS ? if_id_imm : rf_rs2Data);
+      id_ex_rs2Data     <= (!resetn ||flush_id_ex || stall) ? 32'd0      : (id_aluRHS ? id_imm : rf_rs2Data);
       id_ex_aluOp       <= (!resetn ||flush_id_ex || stall) ? `ALU_ADD   : id_aluOp;
 
       id_ex_memRead     <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_memRead;

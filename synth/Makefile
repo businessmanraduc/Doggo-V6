@@ -6,12 +6,13 @@
 # Top module   : soc  (rtl/soc/soc.sv)
 #
 # Usage:
-#   make               - compile program, synthesise, place-and-route
-#   make diagnostic    - synthesize + place-and-route + Fmax & critpath
-#   make prog          - build + load to FPGA SRAM
-#   make flash         - build + write to SPI flash
-#   make imem          - compile program only → imem.hex  (no synth)
-#   make clean         - remove all generated files
+#   make                 - compile program, synthesise, place-and-route
+#   make diagnostic      - synthesize + place-and-route + Fmax & critpath
+#   make diagnostic-full - run SWEEP_SEEDS placements in parallel + report best seed
+#   make prog            - build + load to FPGA SRAM
+#   make flash           - build + write to SPI flash
+#   make imem            - compile program only → imem.hex  (no synth)
+#   make clean           - remove all generated files
 #
 # PROGRAM: path to the .S source to load into IMEM.
 # =============================================================================
@@ -68,11 +69,15 @@ BITSTREAM  = soc.bit
 DIAG_LOG   = soc.timing.log
 DIAG_CFG   = soc.diag.config
 
+# ── Seed sweep settings ───────────────────────────────────────────────────────
+SWEEP_SEEDS ?= 25
+SWEEP_JOBS  ?= $(shell nproc)
+
 # =============================================================================
 # TARGETS
 # =============================================================================
 
-.PHONY: all imem synth pnr diagnostic prog flash clean
+.PHONY: all imem synth pnr diagnostic diagnostic-full prog flash clean
 
 all: $(BITSTREAM)
 
@@ -114,6 +119,20 @@ diagnostic: $(SYNTH_JSON) $(LPF)
 	@echo ""
 	@echo "(full nextpnr log saved to: synth/$(DIAG_LOG))"
 
+diagnostic-full: $(SYNTH_JSON) $(LPF)
+	@echo "Sweeping seeds 1..$(SWEEP_SEEDS) on $(SWEEP_JOBS) parallel jobs ($(SWEEP_SEEDS) place-and-route passes)..."
+	@rm -rf sweep_tmp && mkdir -p sweep_tmp
+	@seq 1 $(SWEEP_SEEDS) | xargs -P $(SWEEP_JOBS) -I {} \
+	  ./sweep.sh {} $(NEXTPNR) $(DEVICE) $(PACKAGE) --json $(SYNTH_JSON) --lpf $(LPF) \
+	  > sweep_tmp/results.txt
+	@echo ""
+	@echo "=== Fmax by seed (best first) ==="
+	@sort -rn sweep_tmp/results.txt | awk '{printf "  seed %2d : %6s MHz\n", $$2, $$1}'
+	@echo ""
+	@sort -rn sweep_tmp/results.txt | head -1 \
+	  | awk '{printf "BEST: seed %d at %s MHz\n", $$2, $$1}'
+	@echo "(per-seed logs in synth/sweep_tmp/log_<seed>)"
+
 prog: $(BITSTREAM)
 	$(LOADER) -b ulx3s $(BITSTREAM)
 
@@ -124,4 +143,5 @@ flash: $(BITSTREAM)
 clean:
 	rm -f $(PROG_ELF) $(IMEM_HEX) $(SYNTH_JSON) $(SYNTH_CFG) $(BITSTREAM) \
         $(DIAG_LOG) $(DIAG_CFG) synth.ys
+	rm -rf sweep_tmp
 
