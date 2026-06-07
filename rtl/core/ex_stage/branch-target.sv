@@ -15,10 +15,16 @@
 // =============================================================================
 module branch_target (
   input  logic [31:0] pc,
+  input  logic [31:0] pc2,
+  input  logic [31:0] pc4,
+  input  logic [31:0] pc6,
   input  logic [31:0] rs1_data,
   input  logic [31:0] immediate,
   input  logic [31:0] immediate_2,
   input  logic        is_jalr,
+  input  logic        is_comp,
+  output logic [31:0] below_addr,
+  output logic [31:0] below_addr_2,
   output logic [31:0] target_addr,
   output logic [31:0] target_addr_2
 );
@@ -30,6 +36,9 @@ module branch_target (
   assign target_addr_2 = (is_jalr)
         ? ((rs1_data + immediate_2) & 32'hFFFFFFFE)
         : ((pc       + immediate_2) & 32'hFFFFFFFF);
+
+  assign below_addr    = is_comp ? pc2 : pc4;
+  assign below_addr_2  = is_comp ? pc4 : pc6;
 
 endmodule
 

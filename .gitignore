@@ -6,5 +6,6 @@ sim_icarus
 tests/compliance/build
 synth/soc.json
 synth/synth.ys
-synth/soc.config
+synth/*.config
+synth/*.log
 synth/*.bit

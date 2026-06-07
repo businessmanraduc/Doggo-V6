@@ -137,8 +137,13 @@ module phantom_core (
 
     logic [BHR_W-1:0] ex_ma_phtIdx;
     logic [1:0]       ex_ma_phtOld;
+    logic [31:0]      ex_ma_belowAddr;  // PC target if branch NOT taken
+    logic [31:0]      ex_ma_belowAddr2;
     logic [31:0]      ex_ma_targetAddr; // actual branch/jump target
+    logic [31:0]      ex_ma_targetAddr2;
     logic             ex_ma_branchTaken;
+    logic [31:0]      ex_ma_predpc;     // predicted target
+    logic             ex_ma_predTaken;  // prediction bit
 
     logic [31:0]      ex_ma_instr;
     logic             ex_ma_isJump;     // 1 => current instruction is a jump
@@ -165,7 +170,7 @@ module phantom_core (
     logic             ex_ma_isEBREAK;
     logic             ex_ma_isMRET;
     logic             ex_ma_isIllegal;
-    logic             ex_ma_csrWrGuard; // 1 => CSR write allowed
+    logic             ex_ma_csrLegal;   // 1 => CSR write allowed
     logic             ex_ma_valid;      // 1 => MA instr is real (irq inject qualifier)
 
     // ── MA/WB ────────────────────────────────────────────────────────────────
@@ -261,16 +266,15 @@ module phantom_core (
     logic [31:0]      ex_linkAddr;
     logic             branch_taken;
     logic             ex_branchTaken;
+    logic [31:0]      ex_belowAddr;
+    logic [31:0]      ex_belowAddr2;
     logic [31:0]      ex_targetAddr;
-    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0]      ex_targetAddr2;
-    /* verilator lint_on  UNUSEDSIGNAL */
-    logic [31:0]      belowpc;
-    logic [31:0]      belowpc2;
+
     logic [31:0]      truepc;
     logic [31:0]      truepc2;
-    logic             ex_targetMiss;
-    logic             ex_predMiss;
+    logic             ma_targetMiss;
+    logic             ma_predMiss;
 
     // ── EX: forwarding & ALU ─────────────────────────────────────────────────
     logic [1:0]       fwd_rs1Sel;
@@ -293,7 +297,7 @@ module phantom_core (
     /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0]      csr_rdData;
     /* verilator lint_on  UNUSEDSIGNAL */
-    logic             ex_csrWrGuard;
+    logic             ex_csrLegal;
 
     // ── MA: trap_unit outputs (synchronous exceptions only) ──────────────────
     logic             sync_trap;
@@ -715,28 +719,25 @@ module phantom_core (
 
     // ── branch_target ────────────────────────────────────────────────────────
     branch_target u_btarget (
-      .pc            (id_ex_pc),
-      .rs1_data      (fwd_rs1Value),
-      .immediate     (id_ex_imm),
-      .immediate_2   (id_ex_imm2),
-      .is_jalr       (id_ex_isJalr),
-      .target_addr   (ex_targetAddr),
-      .target_addr_2 (ex_targetAddr2)
+      .pc             (id_ex_pc),
+      .pc2            (id_ex_pc2),
+      .pc4            (id_ex_pc4),
+      .pc6            (id_ex_pc6),
+      .rs1_data       (fwd_rs1Value),
+      .immediate      (id_ex_imm),
+      .immediate_2    (id_ex_imm2),
+      .is_jalr        (id_ex_isJalr),
+      .is_comp        (id_ex_isComp),
+      .below_addr     (ex_belowAddr),
+      .below_addr_2   (ex_belowAddr2),
+      .target_addr    (ex_targetAddr),
+      .target_addr_2  (ex_targetAddr2)
     );
 
-    // ── Branch Miss Detection ────────────────────────────────────────────────
+    // ── Branch Taken Detection ───────────────────────────────────────────────
     assign ex_branchTaken = (id_ex_isBranch && branch_taken) || id_ex_isJump;
-    assign ex_targetMiss  = (ex_targetAddr  != id_ex_predpc);
-    assign ex_predMiss    = (ex_branchTaken != id_ex_predTaken)
-                         || (ex_branchTaken && ex_targetMiss);
-    assign branch_miss    = !trap_en && !mret_en && ex_predMiss;
 
-    assign belowpc  = id_ex_isComp   ? id_ex_pc2      : id_ex_pc4;
-    assign belowpc2 = id_ex_isComp   ? id_ex_pc4      : id_ex_pc6;
-    assign truepc   = ex_branchTaken ? ex_targetAddr  : belowpc;
-    assign truepc2  = ex_branchTaken ? ex_targetAddr2 : belowpc2;
-
-    assign ex_csrWrGuard = (id_ex_csrOp == `CSR_OP_RW) || (id_ex_csrUseImm
+    assign ex_csrLegal = (id_ex_csrOp == `CSR_OP_RW) || (id_ex_csrUseImm
       ? (|id_ex_instr[19:15])
       : (|id_ex_rs1Index));
 
@@ -774,16 +775,21 @@ module phantom_core (
   // EX/MA PIPELINE REGISTER
   // ===========================================================================
 
-    assign flush_ex_ma = trap_en || mret_en;
+    assign flush_ex_ma = trap_en || mret_en || branch_miss;
     always_ff @(posedge clk) begin
       ex_ma_pc          <= (!resetn || flush_ex_ma) ? 32'd0      : id_ex_pc;
       ex_ma_linkAddr    <= (!resetn || flush_ex_ma) ? 32'd0      : ex_linkAddr;
  
       ex_ma_phtIdx      <= (!resetn || flush_ex_ma) ? '0         : id_ex_phtIdx;
       ex_ma_phtOld      <= (!resetn || flush_ex_ma) ? 2'b01      : id_ex_phtOld;
+      ex_ma_belowAddr   <= (!resetn || flush_ex_ma) ? 32'd0      : ex_belowAddr;
+      ex_ma_belowAddr2  <= (!resetn || flush_ex_ma) ? 32'd2      : ex_belowAddr2;
       ex_ma_targetAddr  <= (!resetn || flush_ex_ma) ? 32'd0      : ex_targetAddr;
+      ex_ma_targetAddr2 <= (!resetn || flush_ex_ma) ? 32'd0      : ex_targetAddr2;
       ex_ma_branchTaken <= (!resetn || flush_ex_ma) ? 1'b0       : ex_branchTaken;
- 
+      ex_ma_predpc      <= (!resetn || flush_ex_ma) ? 32'd0      : id_ex_predpc;
+      ex_ma_predTaken   <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_predTaken;
+
       ex_ma_instr       <= (!resetn || flush_ex_ma) ? `NOP_INSTR : id_ex_instr;
       ex_ma_isJump      <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isJump;
       ex_ma_isBranch    <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isBranch;
@@ -809,7 +815,7 @@ module phantom_core (
       ex_ma_isEBREAK    <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isEBREAK;
       ex_ma_isMRET      <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isMRET;
       ex_ma_isIllegal   <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isIllegal;
-      ex_ma_csrWrGuard  <= (!resetn || flush_ex_ma) ? 1'b0       : ex_csrWrGuard;
+      ex_ma_csrLegal    <= (!resetn || flush_ex_ma) ? 1'b0       : ex_csrLegal;
       ex_ma_valid       <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_valid;
     end
 
@@ -842,7 +848,7 @@ module phantom_core (
       .mret_en       (mret_en)
     );
 
-    // ── interrupt_unit: evaluate async interrupts at the MA instruction ───────
+    // ── interrupt_unit: evaluate async interrupts at the MA instruction ──────
     interrupt_unit u_irq (
       .mie         (csr_mie),
       .mip         (csr_mip),
@@ -853,13 +859,22 @@ module phantom_core (
       .irq_cause   (irq_cause)
     );
 
-    // ── Combined trap: synchronous exception OR asynchronous interrupt ────────
+    // ── Combined trap: synchronous exception OR asynchronous interrupt ───────
     // Both save the MA instruction's PC (sync_mepc == ex_ma_pc). The interrupted
     // instruction does not commit so it cleanly re-executes when the handler returns.
     assign trap_en      = sync_trap || irq_take;
     assign trap_mepc    = sync_mepc;
     assign trap_mcause  = irq_take ? {1'b1, 27'b0, irq_cause} : sync_mcause;
     assign trap_mtval   = irq_take ? 32'd0 : sync_mtval;
+
+    // ── Branch Miss Detection ────────────────────────────────────────────────
+    assign ma_targetMiss = (ex_ma_targetAddr  != ex_ma_predpc);
+    assign ma_predMiss   = (ex_ma_branchTaken != ex_ma_predTaken)
+                        || (ex_ma_branchTaken && ma_targetMiss);
+    assign branch_miss   = !trap_en && !mret_en && ma_predMiss;
+
+    assign truepc  = ex_ma_branchTaken ? ex_ma_targetAddr  : ex_ma_belowAddr;
+    assign truepc2 = ex_ma_branchTaken ? ex_ma_targetAddr2 : ex_ma_belowAddr2;
 
     // ── CSR Read-Modify-Write ────────────────────────────────────────────────
     assign csr_zimm     = {27'd0, ex_ma_instr[19:15]};
@@ -874,7 +889,7 @@ module phantom_core (
         default:    csr_wrData = 32'd0;
       endcase
     end
-    assign csr_wrEnable = ex_ma_csrEnable && ex_ma_csrWrGuard;
+    assign csr_wrEnable = ex_ma_csrEnable && ex_ma_csrLegal;
 
     // ── DMEM load extraction ─────────────────────────────────────────────────
     always_comb begin

@@ -7,6 +7,7 @@
 #
 # Usage:
 #   make               - compile program, synthesise, place-and-route
+#   make diagnostic    - synthesize + place-and-route + Fmax & critpath
 #   make prog          - build + load to FPGA SRAM
 #   make flash         - build + write to SPI flash
 #   make imem          - compile program only → imem.hex  (no synth)
@@ -66,12 +67,14 @@ IMEM_HEX   = imem.hex
 SYNTH_JSON = soc.json
 SYNTH_CFG  = soc.config
 BITSTREAM  = soc.bit
+DIAG_LOG   = soc.timing.log
+DIAG_CFG   = soc.diag.config
 
 # =============================================================================
 # TARGETS
 # =============================================================================
 
-.PHONY: all imem synth pnr prog flash clean
+.PHONY: all imem synth pnr diagnostic prog flash clean
 
 all: $(BITSTREAM)
 
@@ -104,6 +107,15 @@ $(BITSTREAM): $(SYNTH_JSON) $(LPF)
              --textcfg $(SYNTH_CFG)
 	$(ECPPACK) $(SYNTH_CFG) $(BITSTREAM)
 
+diagnostic: $(SYNTH_JSON) $(LPF)
+	@echo "Running synthesis + place-and-route timing analysis..."
+	@$(NEXTPNR) $(DEVICE) $(PACKAGE) --json $(SYNTH_JSON) --lpf $(LPF) \
+              --timing-allow-fail --textcfg $(DIAG_CFG) > $(DIAG_LOG) 2>&1 || true
+	@echo ""
+	@python3 critpath.py $(DIAG_LOG)
+	@echo ""
+	@echo "(full nextpnr log saved to: synth/$(DIAG_LOG))"
+
 prog: $(BITSTREAM)
 	$(LOADER) -b ulx3s $(BITSTREAM)
 
@@ -112,5 +124,6 @@ flash: $(BITSTREAM)
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 clean:
-	rm -f $(PROG_ELF) $(IMEM_HEX) $(SYNTH_JSON) $(SYNTH_CFG) $(BITSTREAM)
+	rm -f $(PROG_ELF) $(IMEM_HEX) $(SYNTH_JSON) $(SYNTH_CFG) $(BITSTREAM) \
+        $(DIAG_LOG) $(DIAG_CFG) synth.ys
 
