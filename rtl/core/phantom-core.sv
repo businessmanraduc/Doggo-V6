@@ -78,7 +78,6 @@ module phantom_core (
     logic [31:0]      if_id_instr;      // full instruction word
     logic             if_id_isComp;     // 1 => current instruction is 16-bit C
     logic [31:0]      if_id_imm;        // extracted immediate value
-    logic [31:0]      if_id_imm2;       // extracted immediate value + 2
 
     logic [4:0]       if_id_rs1Index;   // extracted rs1 index
     logic [4:0]       if_id_rs2Index;   // extracted rs2 index
@@ -231,7 +230,6 @@ module phantom_core (
 
     // ── IF: imm_generator outputs ────────────────────────────────────────────
     logic [31:0]      if_imm;
-    logic [31:0]      if_imm2;
 
     // ── ID: control_unit outputs ─────────────────────────────────────────────
     logic             id_isJump;
@@ -485,8 +483,7 @@ module phantom_core (
     imm_generator u_immgen (
       .instrWord      (if_instr),
       .is_compressed  (if_isCompressed),
-      .immediate      (if_imm),
-      .immediate_2    (if_imm2)
+      .immediate      (if_imm)
     );
 
   // ===========================================================================
@@ -513,7 +510,6 @@ module phantom_core (
           if_id_instr     <= `NOP_INSTR;
           if_id_isComp    <= 1'b0;
           if_id_imm       <= 32'd0;
-          if_id_imm2      <= 32'd2;
           if_id_rs1Index  <= 5'd0;
           if_id_rs2Index  <= 5'd0;
           if_id_rdIndex   <= 5'd0;
@@ -530,7 +526,6 @@ module phantom_core (
           if_id_instr     <= if_instr;
           if_id_isComp    <= if_isCompressed;
           if_id_imm       <= if_imm;
-          if_id_imm2      <= if_imm2;
           if_id_rs1Index  <= fd_rs1Index;
           if_id_rs2Index  <= fd_rs2Index;
           if_id_rdIndex   <= fd_rdIndex;
@@ -625,7 +620,7 @@ module phantom_core (
       id_ex_instr       <= (!resetn ||flush_id_ex || stall) ? `NOP_INSTR : if_id_instr;
       id_ex_isComp      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : if_id_isComp;
       id_ex_imm         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_imm;
-      id_ex_imm2        <= (!resetn ||flush_id_ex || stall) ? 32'd2      : if_id_imm2;
+      id_ex_imm2        <= (!resetn ||flush_id_ex || stall) ? 32'd2      : (if_id_imm + 32'd2);
       id_ex_isJump      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isJump;
       id_ex_isJalr      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isJalr;
       id_ex_isMulDiv    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isMulDiv;

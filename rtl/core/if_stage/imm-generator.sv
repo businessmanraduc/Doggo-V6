@@ -11,7 +11,6 @@
 //
 // Outputs:
 //   immediate   - The extracted immediate value (sign-extended where applicable)
-//   immediate_2 - immediate + 2 (used for dual-PC branch target calculation)
 //
 // Pure combinational - no state, no clock. Decode paths run in parallel;
 // output mux selects based on is_compressed flag.
@@ -19,8 +18,7 @@
 module imm_generator (
   input  logic [31:0] instrWord,
   input  logic        is_compressed,
-  output logic [31:0] immediate,
-  output logic [31:0] immediate_2
+  output logic [31:0] immediate
 );
 
   // =============================================================================
@@ -184,10 +182,8 @@ module imm_generator (
     always_comb begin
       if (is_compressed) begin
         immediate   = imm16;
-        immediate_2 = imm16 + 32'h2;
       end else begin
         immediate   = imm32;
-        immediate_2 = imm32 + 32'h2;
       end
     end
   // =============================================================================
