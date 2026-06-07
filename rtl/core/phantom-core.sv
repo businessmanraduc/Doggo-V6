@@ -79,7 +79,6 @@ module phantom_core (
     logic             if_id_isComp;     // 1 => current instruction is 16-bit C
     logic [31:0]      if_id_imm;        // extracted immediate value
     logic [31:0]      if_id_imm2;       // extracted immediate value + 2
-    logic             if_id_isLoad;     // 1 => current instruction is a load
 
     logic [4:0]       if_id_rs1Index;   // extracted rs1 index
     logic [4:0]       if_id_rs2Index;   // extracted rs2 index
@@ -108,9 +107,10 @@ module phantom_core (
     logic [2:0]       id_ex_branchType; // type of decoded branch
 
     logic [4:0]       id_ex_rs1Index;
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [4:0]       id_ex_rs2Index;
+    /* verilator lint_on  UNUSEDSIGNAL */
     logic [4:0]       id_ex_rdIndex;
-    logic             id_ex_rdNonZero;  // 1 => rd index != 0
     logic [31:0]      id_ex_rs1Data;    // rs1 data fetched from the regfile
     logic [31:0]      id_ex_rs2Data;    // rs2 data fetched from the regfile
     logic [3:0]       id_ex_aluOp;      // ALU opcode
@@ -150,7 +150,6 @@ module phantom_core (
     logic             ex_ma_isBranch;   // 1 => current instruction is a branch
 
     logic [4:0]       ex_ma_rdIndex;
-    logic             ex_ma_rdNonZero;  // 1 => rd index != 0
     logic [31:0]      ex_ma_rs1Fwd;     // forwarded rs1 value
     logic [31:0]      ex_ma_rs2Fwd;     // forwarded rs2 value
     logic [31:0]      ex_ma_aluResult;
@@ -179,7 +178,6 @@ module phantom_core (
     /* verilator lint_on  UNUSEDSIGNAL */
 
     logic [4:0]       ma_wb_rdIndex;
-    logic             ma_wb_rdNonZero;
     logic [31:0]      ma_wb_aluResult;
 
     logic [31:0]      ma_wb_loadData;   // sign/zero extended load result
@@ -226,8 +224,8 @@ module phantom_core (
     logic [4:0]       fd_rs1Index;
     logic [4:0]       fd_rs2Index;
     logic [4:0]       fd_rdIndex;
-    logic             fd_isLoad;
     /* verilator lint_off UNUSEDSIGNAL */
+    logic             fd_isLoad;
     logic             fd_isBranchJump;
     /* verilator lint_on  UNUSEDSIGNAL */
 
@@ -262,6 +260,13 @@ module phantom_core (
     logic [31:0]      rf_rs1Data;
     logic [31:0]      rf_rs2Data;
 
+    // ── Scoreboard control ───────────────────────────────────────────────────
+    logic             rs1_ready;        // ID rs1 operand available
+    logic             rs2_ready;        // ID rs2 operand available
+    logic             id_wr_en;         // ID writer reserves rd   (counter +1)
+    logic             ma_wr_en;         // MA writer leaves for WB (counter -1)
+    logic             ex_undo_en;       // squashed EX writer undo (counter -1)
+
     // ── EX: branch_eval + branch_target outputs ──────────────────────────────
     logic [31:0]      ex_linkAddr;
     logic             branch_taken;
@@ -277,12 +282,9 @@ module phantom_core (
     logic             ma_predMiss;
 
     // ── EX: forwarding & ALU ─────────────────────────────────────────────────
-    logic [1:0]       fwd_rs1Sel;
-    logic [1:0]       fwd_rs2Sel;
-    logic [31:0]      wb_fwdValue;
-    logic [31:0]      ma_fwdValue;
-    logic [31:0]      fwd_rs1Value;
-    logic [31:0]      fwd_rs2Value;
+    logic [31:0]      wb_fwdValue;      // WB writeback value (also regfile wr_data)
+    logic [31:0]      fwd_rs1Value;     // EX operand A
+    logic [31:0]      fwd_rs2Value;     // EX operand B
     logic [31:0]      alu_lhs;
     logic [31:0]      alu_rhs;
     logic [31:0]      alu_result;
@@ -499,26 +501,41 @@ module phantom_core (
     assign flush_if_id = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
       if (!ex_busy) begin
-      if_id_pc        <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc;
-      if_id_pc2       <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc2;
-      if_id_pc4       <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc4;
-      if_id_pc6       <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc6;
-
-      if_id_predpc    <= (!resetn || flush_if_id || stall) ? 32'd0      : r_predpc;
-      if_id_predTaken <= (!resetn || flush_if_id || stall) ? 1'b0       : pred_taken;
-      if_id_phtIdx    <= (!resetn || flush_if_id || stall) ? '0         : pht_idx;
-      if_id_phtOld    <= (!resetn || flush_if_id || stall) ? 2'b01      : pht_rdata;
-
-      if_id_instr     <= (!resetn || flush_if_id || stall) ? `NOP_INSTR : if_instr;
-      if_id_isComp    <= (!resetn || flush_if_id || stall) ? 1'b0       : if_isCompressed;
-      if_id_imm       <= (!resetn || flush_if_id || stall) ? 32'd0      : if_imm;
-      if_id_imm2      <= (!resetn || flush_if_id || stall) ? 32'd2      : if_imm2;
-      if_id_isLoad    <= (!resetn || flush_if_id || stall) ? 1'b0       : fd_isLoad;
-
-      if_id_rs1Index  <= (!resetn || flush_if_id || stall) ? 5'd0       : fd_rs1Index;
-      if_id_rs2Index  <= (!resetn || flush_if_id || stall) ? 5'd0       : fd_rs2Index;
-      if_id_rdIndex   <= (!resetn || flush_if_id || stall) ? 5'd0       : fd_rdIndex;
-      if_id_valid     <= (!resetn || flush_if_id || stall) ? 1'b0       : 1'b1;
+        if (!resetn || flush_if_id) begin             // squash -> insert bubble
+          if_id_pc        <= 32'd0;
+          if_id_pc2       <= 32'd0;
+          if_id_pc4       <= 32'd0;
+          if_id_pc6       <= 32'd0;
+          if_id_predpc    <= 32'd0;
+          if_id_predTaken <= 1'b0;
+          if_id_phtIdx    <= '0;
+          if_id_phtOld    <= 2'b01;
+          if_id_instr     <= `NOP_INSTR;
+          if_id_isComp    <= 1'b0;
+          if_id_imm       <= 32'd0;
+          if_id_imm2      <= 32'd2;
+          if_id_rs1Index  <= 5'd0;
+          if_id_rs2Index  <= 5'd0;
+          if_id_rdIndex   <= 5'd0;
+          if_id_valid     <= 1'b0;
+        end else if (!stall) begin                    // advance (on stall: hold)
+          if_id_pc        <= r_pc;
+          if_id_pc2       <= r_pc2;
+          if_id_pc4       <= r_pc4;
+          if_id_pc6       <= r_pc6;
+          if_id_predpc    <= r_predpc;
+          if_id_predTaken <= pred_taken;
+          if_id_phtIdx    <= pht_idx;
+          if_id_phtOld    <= pht_rdata;
+          if_id_instr     <= if_instr;
+          if_id_isComp    <= if_isCompressed;
+          if_id_imm       <= if_imm;
+          if_id_imm2      <= if_imm2;
+          if_id_rs1Index  <= fd_rs1Index;
+          if_id_rs2Index  <= fd_rs2Index;
+          if_id_rdIndex   <= fd_rdIndex;
+          if_id_valid     <= 1'b1;
+        end
       end
     end
 
@@ -560,23 +577,28 @@ module phantom_core (
     // ── regfile ──────────────────────────────────────────────────────────────
     regfile u_rf (
       .clk            (clk),
+      .resetn         (resetn),
       .rd_index_a     (if_id_rs1Index),
       .rd_data_a      (rf_rs1Data),
       .rd_index_b     (if_id_rs2Index),
       .rd_data_b      (rf_rs2Data),
       .wr_index       (ma_wb_rdIndex),
       .wr_data        (wb_fwdValue),
-      .wr_en          (ma_wb_regWrite)
+      .wr_en          (ma_wb_regWrite),
+      .rs1_ready      (rs1_ready),
+      .rs2_ready      (rs2_ready),
+      .id_wr_en       (id_wr_en),
+      .id_wr_index    (if_id_rdIndex),
+      .ma_wr_en       (ma_wr_en),
+      .ma_wr_index    (ex_ma_rdIndex),
+      .ex_undo_en     (ex_undo_en),
+      .ex_undo_index  (id_ex_rdIndex)
     );
  
-    // ── hazard_unit ──────────────────────────────────────────────────────────
-    hazard_unit u_haz (
-      .if_rs1_index   (fd_rs1Index),
-      .if_rs2_index   (fd_rs2Index),
-      .id_rd_index    (if_id_rdIndex),
-      .id_is_load     (if_id_isLoad),
-      .stall          (stall)
-    );
+    assign stall      = if_id_valid && (!rs1_ready || !rs2_ready);
+    assign id_wr_en   = if_id_valid && id_regWrite    && !stall && !flush_id_ex && !ex_busy;
+    assign ex_undo_en = id_ex_valid && id_ex_regWrite && (branch_miss || trap_en || mret_en);
+    assign ma_wr_en   = ex_ma_valid && ex_ma_regWrite;
 
   // ===========================================================================
   // ID STAGE
@@ -590,49 +612,48 @@ module phantom_core (
     assign flush_id_ex = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
       if (!ex_busy) begin
-      id_ex_pc          <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc;
-      id_ex_pc2         <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc2;
-      id_ex_pc4         <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc4;
-      id_ex_pc6         <= (!resetn || flush_id_ex) ? 32'd0      : if_id_pc6;
+      id_ex_pc          <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc;
+      id_ex_pc2         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc2;
+      id_ex_pc4         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc4;
+      id_ex_pc6         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc6;
 
-      id_ex_predpc      <= (!resetn || flush_id_ex) ? 32'd0      : if_id_predpc;
-      id_ex_predTaken   <= (!resetn || flush_id_ex) ? 1'b0       : if_id_predTaken;
-      id_ex_phtIdx      <= (!resetn || flush_id_ex) ? '0         : if_id_phtIdx;
-      id_ex_phtOld      <= (!resetn || flush_id_ex) ? 2'b01      : if_id_phtOld;
+      id_ex_predpc      <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_predpc;
+      id_ex_predTaken   <= (!resetn ||flush_id_ex || stall) ? 1'b0       : if_id_predTaken;
+      id_ex_phtIdx      <= (!resetn ||flush_id_ex || stall) ? '0         : if_id_phtIdx;
+      id_ex_phtOld      <= (!resetn ||flush_id_ex || stall) ? 2'b01      : if_id_phtOld;
 
-      id_ex_instr       <= (!resetn || flush_id_ex) ? `NOP_INSTR : if_id_instr;
-      id_ex_isComp      <= (!resetn || flush_id_ex) ? 1'b0       : if_id_isComp;
-      id_ex_imm         <= (!resetn || flush_id_ex) ? 32'd0      : if_id_imm;
-      id_ex_imm2        <= (!resetn || flush_id_ex) ? 32'd2      : if_id_imm2;
-      id_ex_isJump      <= (!resetn || flush_id_ex) ? 1'b0       : id_isJump;
-      id_ex_isJalr      <= (!resetn || flush_id_ex) ? 1'b0       : id_isJalr;
-      id_ex_isMulDiv    <= (!resetn || flush_id_ex) ? 1'b0       : id_isMulDiv;
-      id_ex_isBranch    <= (!resetn || flush_id_ex) ? 1'b0       : id_isBranch;
-      id_ex_branchType  <= (!resetn || flush_id_ex) ? 3'b000     : id_branchType;
+      id_ex_instr       <= (!resetn ||flush_id_ex || stall) ? `NOP_INSTR : if_id_instr;
+      id_ex_isComp      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : if_id_isComp;
+      id_ex_imm         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_imm;
+      id_ex_imm2        <= (!resetn ||flush_id_ex || stall) ? 32'd2      : if_id_imm2;
+      id_ex_isJump      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isJump;
+      id_ex_isJalr      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isJalr;
+      id_ex_isMulDiv    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isMulDiv;
+      id_ex_isBranch    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isBranch;
+      id_ex_branchType  <= (!resetn ||flush_id_ex || stall) ? 3'b000     : id_branchType;
 
-      id_ex_rs1Index    <= (!resetn || flush_id_ex) ? 5'd0       : if_id_rs1Index;
-      id_ex_rs2Index    <= (!resetn || flush_id_ex) ? 5'd0       : if_id_rs2Index;
-      id_ex_rdIndex     <= (!resetn || flush_id_ex) ? 5'd0       : if_id_rdIndex;
-      id_ex_rdNonZero   <= (!resetn || flush_id_ex) ? 1'b0       : (if_id_rdIndex != 5'd0);
-      id_ex_rs1Data     <= (!resetn || flush_id_ex) ? 32'd0      : (id_aluLHS ? if_id_pc  : rf_rs1Data);
-      id_ex_rs2Data     <= (!resetn || flush_id_ex) ? 32'd0      : (id_aluRHS ? if_id_imm : rf_rs2Data);
-      id_ex_aluOp       <= (!resetn || flush_id_ex) ? `ALU_ADD   : id_aluOp;
+      id_ex_rs1Index    <= (!resetn ||flush_id_ex || stall) ? 5'd0       : if_id_rs1Index;
+      id_ex_rs2Index    <= (!resetn ||flush_id_ex || stall) ? 5'd0       : if_id_rs2Index;
+      id_ex_rdIndex     <= (!resetn ||flush_id_ex || stall) ? 5'd0       : if_id_rdIndex;
+      id_ex_rs1Data     <= (!resetn ||flush_id_ex || stall) ? 32'd0      : (id_aluLHS ? if_id_pc  : rf_rs1Data);
+      id_ex_rs2Data     <= (!resetn ||flush_id_ex || stall) ? 32'd0      : (id_aluRHS ? if_id_imm : rf_rs2Data);
+      id_ex_aluOp       <= (!resetn ||flush_id_ex || stall) ? `ALU_ADD   : id_aluOp;
 
-      id_ex_memRead     <= (!resetn || flush_id_ex) ? 1'b0       : id_memRead;
-      id_ex_memWrite    <= (!resetn || flush_id_ex) ? 1'b0       : id_memWrite;
-      id_ex_memWidth    <= (!resetn || flush_id_ex) ? `WIDTH_W   : id_memWidth;
-      id_ex_regWrite    <= (!resetn || flush_id_ex) ? 1'b0       : id_regWrite;
-      id_ex_wbSel       <= (!resetn || flush_id_ex) ? 2'b00      : id_wbSel;
+      id_ex_memRead     <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_memRead;
+      id_ex_memWrite    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_memWrite;
+      id_ex_memWidth    <= (!resetn ||flush_id_ex || stall) ? `WIDTH_W   : id_memWidth;
+      id_ex_regWrite    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_regWrite;
+      id_ex_wbSel       <= (!resetn ||flush_id_ex || stall) ? 2'b00      : id_wbSel;
 
-      id_ex_csrEnable   <= (!resetn || flush_id_ex) ? 1'b0       : id_csrEnable;
-      id_ex_csrOp       <= (!resetn || flush_id_ex) ? 2'b00      : id_csrOp;
-      id_ex_csrUseImm   <= (!resetn || flush_id_ex) ? 1'b0       : id_csrUseImm;
-      id_ex_csrIndex    <= (!resetn || flush_id_ex) ? 12'd0      : id_csrIndex;
-      id_ex_isECALL     <= (!resetn || flush_id_ex) ? 1'b0       : id_isECALL;
-      id_ex_isEBREAK    <= (!resetn || flush_id_ex) ? 1'b0       : id_isEBREAK;
-      id_ex_isMRET      <= (!resetn || flush_id_ex) ? 1'b0       : id_isMRET;
-      id_ex_isIllegal   <= (!resetn || flush_id_ex) ? 1'b0       : id_isIllegal;
-      id_ex_valid       <= (!resetn || flush_id_ex) ? 1'b0       : if_id_valid;
+      id_ex_csrEnable   <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_csrEnable;
+      id_ex_csrOp       <= (!resetn ||flush_id_ex || stall) ? 2'b00      : id_csrOp;
+      id_ex_csrUseImm   <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_csrUseImm;
+      id_ex_csrIndex    <= (!resetn ||flush_id_ex || stall) ? 12'd0      : id_csrIndex;
+      id_ex_isECALL     <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isECALL;
+      id_ex_isEBREAK    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isEBREAK;
+      id_ex_isMRET      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isMRET;
+      id_ex_isIllegal   <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isIllegal;
+      id_ex_valid       <= (!resetn ||flush_id_ex || stall) ? 1'b0       : if_id_valid;
       end
     end
 
@@ -645,40 +666,11 @@ module phantom_core (
   // EX STAGE  ──  Forwarding, ALU, branch evaluation, Level 1 branch resolution
   // ===========================================================================
 
-    // ── forward_unit ─────────────────────────────────────────────────────────
-    forward_unit u_fwd (
-      .ex_rs1_index  (id_ex_rs1Index),
-      .ex_rs2_index  (id_ex_rs2Index),
-      .ma_rd_index   (ex_ma_rdIndex),
-      .ma_reg_write  (ex_ma_regWrite),
-      .ma_rd_nonzero (ex_ma_rdNonZero),
-      .wb_rd_index   (ma_wb_rdIndex),
-      .wb_reg_write  (ma_wb_regWrite),
-      .wb_rd_nonzero (ma_wb_rdNonZero),
-      .fwd_A_sel     (fwd_rs1Sel),
-      .fwd_B_sel     (fwd_rs2Sel)
-    );
-
     // ── three-way forwarding muxes ───────────────────────────────────────────
     assign ex_linkAddr = id_ex_isComp ? id_ex_pc2 : id_ex_pc4;
 
-    always_comb begin
-      case (fwd_rs1Sel)
-        2'b00: fwd_rs1Value = id_ex_rs1Data;
-        2'b01: fwd_rs1Value = wb_fwdValue;
-        2'b10: fwd_rs1Value = ma_fwdValue;
-        2'b11: fwd_rs1Value = 32'hDEADBEEF;
-      endcase
-    end
-
-    always_comb begin
-      case (fwd_rs2Sel)
-        2'b00: fwd_rs2Value = id_ex_rs2Data;
-        2'b01: fwd_rs2Value = wb_fwdValue;
-        2'b10: fwd_rs2Value = ma_fwdValue;
-        2'b11: fwd_rs2Value = 32'hDEADBEEF;
-      endcase
-    end
+    assign fwd_rs1Value = id_ex_rs1Data;
+    assign fwd_rs2Value = id_ex_rs2Data;
 
     assign alu_lhs      = fwd_rs1Value;
     assign alu_rhs      = fwd_rs2Value;
@@ -775,7 +767,7 @@ module phantom_core (
   // EX/MA PIPELINE REGISTER
   // ===========================================================================
 
-    assign flush_ex_ma = trap_en || mret_en || branch_miss;
+    assign flush_ex_ma = trap_en || mret_en || branch_miss || ex_busy;
     always_ff @(posedge clk) begin
       ex_ma_pc          <= (!resetn || flush_ex_ma) ? 32'd0      : id_ex_pc;
       ex_ma_linkAddr    <= (!resetn || flush_ex_ma) ? 32'd0      : ex_linkAddr;
@@ -795,7 +787,6 @@ module phantom_core (
       ex_ma_isBranch    <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isBranch;
  
       ex_ma_rdIndex     <= (!resetn || flush_ex_ma) ? 5'd0       : id_ex_rdIndex;
-      ex_ma_rdNonZero   <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_rdNonZero;
       ex_ma_rs1Fwd      <= (!resetn || flush_ex_ma) ? 32'd0      : fwd_rs1Value;
       ex_ma_rs2Fwd      <= (!resetn || flush_ex_ma) ? 32'd0      : fwd_rs2Value;
       ex_ma_aluResult   <= (!resetn || flush_ex_ma) ? 32'd0      : ex_result;
@@ -940,16 +931,6 @@ module phantom_core (
     assign dmem_be    = store_be;
     assign dmem_wdata = store_data;
 
-    // ── MA forwarding value ──────────────────────────────────────────────────
-    always_comb begin
-      case (ex_ma_wbSel)
-        2'b00: ma_fwdValue = ex_ma_aluResult;
-        2'b01: ma_fwdValue = 32'hDEADBEEF;
-        2'b10: ma_fwdValue = ex_ma_linkAddr;
-        2'b11: ma_fwdValue = csr_rdDataRaw;
-      endcase
-    end
-
   // ===========================================================================
   // MA STAGE
   // ===========================================================================
@@ -962,7 +943,6 @@ module phantom_core (
     always_ff @(posedge clk) begin
       ma_wb_pc        <= !resetn ? 32'd0  : ex_ma_pc;
       ma_wb_rdIndex   <= !resetn ? 5'd0   : ex_ma_rdIndex;
-      ma_wb_rdNonZero <= !resetn ? 1'b0   : ex_ma_rdNonZero;
       ma_wb_aluResult <= !resetn ? 32'd0  : ex_ma_aluResult;
       ma_wb_loadData  <= !resetn ? 32'd0  : load_data;
       ma_wb_csrData   <= !resetn ? 32'd0  : csr_rdDataRaw;

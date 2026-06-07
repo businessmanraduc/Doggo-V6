@@ -41,8 +41,6 @@ SV_SOURCES = \
   $(CORE)/if_stage/fast-decode.sv     \
   $(CORE)/id_stage/control-unit.sv    \
   $(CORE)/if_stage/imm-generator.sv   \
-  $(CORE)/ex_stage/forwarding-unit.sv \
-  $(CORE)/id_stage/hazard-unit.sv     \
   $(CORE)/ex_stage/branch-eval.sv     \
   $(CORE)/ex_stage/branch-target.sv   \
   $(CORE)/ma_stage/trap-unit.sv       \
