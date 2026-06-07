@@ -48,29 +48,23 @@ module forward_unit (
   // MA takes priority over WB because it holds the more recent result.
   // ===========================================================================
     logic fwd_rs1_ma;
-    assign fwd_rs1_ma = (ma_reg_write)
-                     && (ma_rd_nonzero)
-                     && (ma_rd_index == ex_rs1_index);
     logic fwd_rs1_wb;
-    assign fwd_rs1_wb = (wb_reg_write)
-                     && (wb_rd_nonzero)
-                     && (wb_rd_index == ex_rs1_index);
+    assign fwd_rs1_ma = (ma_reg_write && ma_rd_nonzero) && (ma_rd_index == ex_rs1_index);
+    assign fwd_rs1_wb = (wb_reg_write && wb_rd_nonzero) && (wb_rd_index == ex_rs1_index);
+
+    logic fwd_rs2_ma;
+    logic fwd_rs2_wb;
+    assign fwd_rs2_ma = (ma_reg_write && ma_rd_nonzero) && (ma_rd_index == ex_rs2_index);
+    assign fwd_rs2_wb = (wb_reg_write && wb_rd_nonzero) && (wb_rd_index == ex_rs2_index);
+
     assign fwd_A_sel  = fwd_rs1_ma ? 2'b10
                       : fwd_rs1_wb ? 2'b01
                       : 2'b00;
-
-    logic fwd_rs2_ma;
-    assign fwd_rs2_ma = (ma_reg_write)
-                     && (ma_rd_nonzero)
-                     && (ma_rd_index == ex_rs2_index);
-    logic fwd_rs2_wb;
-    assign fwd_rs2_wb = (wb_reg_write)
-                     && (wb_rd_nonzero)
-                     && (wb_rd_index == ex_rs2_index);
     assign fwd_B_sel  = fwd_rs2_ma ? 2'b10
                       : fwd_rs2_wb ? 2'b01
                       : 2'b00;
-  // ===========================================================================
+ 
+ // ===========================================================================
   // FORWARDING SELECT  ──  operand forwarding
   // ===========================================================================
 

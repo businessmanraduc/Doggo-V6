@@ -96,7 +96,6 @@ module phantom_core (
     logic             id_ex_predTaken;
     logic [BHR_W-1:0] id_ex_phtIdx;
     logic [1:0]       id_ex_phtOld;
-    logic             id_ex_earlySolve; // 1 => branch resolved early in ID
 
     logic [31:0]      id_ex_instr;
     logic             id_ex_isComp;
@@ -197,7 +196,6 @@ module phantom_core (
     // ── Pipeline control ─────────────────────────────────────────────────────
     logic             stall;            // load-use stall
     logic             branch_miss;      // EX-stage misprediction
-    logic             id_branch_miss;   // ID-stage misprediction
     logic             trap_en;
     logic             mret_en;
     logic             flush_if_id;
@@ -224,7 +222,9 @@ module phantom_core (
     logic [4:0]       fd_rs2Index;
     logic [4:0]       fd_rdIndex;
     logic             fd_isLoad;
+    /* verilator lint_off UNUSEDSIGNAL */
     logic             fd_isBranchJump;
+    /* verilator lint_on  UNUSEDSIGNAL */
 
     // ── IF: imm_generator outputs ────────────────────────────────────────────
     logic [31:0]      if_imm;
@@ -256,20 +256,6 @@ module phantom_core (
     // ── ID: regfile outputs ──────────────────────────────────────────────────
     logic [31:0]      rf_rs1Data;
     logic [31:0]      rf_rs2Data;
-
-    // ── ID: Early branch resolution ──────────────────────────────────────────
-    logic             id_branchOpsReady;
-    logic             id_branchTakenEarly;
-    logic [31:0]      id_targetAddrEarly;
-    logic [31:0]      id_targetAddrEarly2;
-    logic [31:0]      id_belowpc;
-    logic [31:0]      id_belowpc2;
-    logic [31:0]      id_truepc;
-    logic [31:0]      id_truepc2;
-    logic             id_ex_rsMatch;
-    logic             id_ma_rsMatch;
-    logic             id_targetMiss;
-    logic             id_predMiss;
 
     // ── EX: branch_eval + branch_target outputs ──────────────────────────────
     logic [31:0]      ex_linkAddr;
@@ -366,11 +352,11 @@ module phantom_core (
       .update_target (ex_ma_targetAddr)
     );
 
-    assign pred_taken = pht_rdata[1] && fd_isBranchJump && r_predvalid;
+    assign pred_taken = pht_rdata[1] && r_predvalid;
 
     // ── BHR: speculative join update, reset on any miss ──────────────────────
     always_ff @(posedge clk) begin
-      if (!resetn || branch_miss || id_branch_miss) begin
+      if (!resetn || branch_miss) begin
         r_bhr <= '0;
       end else if (!stall && !ex_busy) begin
         r_bhr <= {r_bhr[BHR_W-2:0], pred_taken};
@@ -417,7 +403,7 @@ module phantom_core (
 
     // ── Prediction registers: reset on any miss, trap or MRET ────────────────
     always_ff @(posedge clk) begin
-      if (!resetn || branch_miss || id_branch_miss || trap_en || mret_en) begin
+      if (!resetn || branch_miss || trap_en || mret_en) begin
         r_predpc    <= 32'd0;
         r_predpc2   <= 32'd2;
         r_predvalid <= 1'b0;
@@ -441,10 +427,9 @@ module phantom_core (
   //   1: trap_en          → csr_mtvec              (exception entry)
   //   2: mret_en          → csr_mepc               (return from trap)
   //   3: branch_miss      → truepc                 (EX-stage misprediction)
-  //   4: id_branch_miss   → id_truepc              (ID-stage early resolution)
-  //   5: stall            → r_pc                   (load-use stall, hold PC)
-  //   6: pred_taken       → r_predpc               (follow branch prediction)
-  //   7: default          → pc_inc_seq (+2 or +4)  (sequential advance)
+  //   4: stall            → r_pc                   (load-use stall, hold PC)
+  //   5: pred_taken       → r_predpc               (follow branch prediction)
+  //   6: default          → pc_inc_seq (+2 or +4)  (sequential advance)
   // ===========================================================================
 
     assign imem_addr_a = next_pc;
@@ -466,7 +451,6 @@ module phantom_core (
         (trap_en):        begin next_pc = csr_mtvec;     next_pc2 = csr_mtvec2;            end
         (mret_en):        begin next_pc = csr_mepc;      next_pc2 = csr_mepc2;             end
         (branch_miss):    begin next_pc = truepc;        next_pc2 = truepc2;               end
-        (id_branch_miss): begin next_pc = id_truepc;     next_pc2 = id_truepc2;            end
         (stall):          begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
         (ex_busy):        begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
         (pred_taken):     begin next_pc = r_predpc;      next_pc2 = r_predpc2;             end
@@ -508,7 +492,7 @@ module phantom_core (
   // IF/ID PIPELINE REGISTER
   // ===========================================================================
 
-    assign flush_if_id = branch_miss || id_branch_miss || trap_en || mret_en;
+    assign flush_if_id = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
       if (!ex_busy) begin
       if_id_pc        <= (!resetn || flush_if_id || stall) ? 32'd0      : r_pc;
@@ -540,7 +524,7 @@ module phantom_core (
 
 
   // ===========================================================================
-  // ID STAGE  ──  Full decode, regfile read, hazard detect, early branch resolve
+  // ID STAGE  ──  Full decode, regfile read, hazard detect
   // ===========================================================================
 
     // ── control_unit ─────────────────────────────────────────────────────────
@@ -590,43 +574,6 @@ module phantom_core (
       .stall          (stall)
     );
 
-    // ── ID Early Branch Resolution ───────────────────────────────────────────
-    assign id_ex_rsMatch = (id_ex_rdIndex == if_id_rs1Index) || (id_ex_rdIndex == if_id_rs2Index);
-    assign id_ma_rsMatch = (ex_ma_rdIndex == if_id_rs1Index) || (ex_ma_rdIndex == if_id_rs2Index);
-
-    assign id_branchOpsReady = id_isBranch
-      && !(id_ex_regWrite && id_ex_rsMatch && id_ex_rdNonZero)
-      && !(ex_ma_regWrite && id_ma_rsMatch && ex_ma_rdNonZero);
-
-    branch_eval u_beval_id (
-      .rs1_data     (rf_rs1Data),
-      .rs2_data     (rf_rs2Data),
-      .branch_type  (id_branchType),
-      .branch_taken (id_branchTakenEarly)
-    );
-
-    branch_target u_btarget_id (
-      .pc            (if_id_pc),
-      .rs1_data      (32'd0),
-      .immediate     (if_id_imm),
-      .immediate_2   (if_id_imm2),
-      .is_jalr       (1'd0),
-      .target_addr   (id_targetAddrEarly),
-      .target_addr_2 (id_targetAddrEarly2)
-    );
-
-    assign id_belowpc          = if_id_isComp ? if_id_pc2 : if_id_pc4;
-    assign id_belowpc2         = if_id_isComp ? if_id_pc4 : if_id_pc6;
-    assign id_truepc           = id_branchTakenEarly ? id_targetAddrEarly  : id_belowpc;
-    assign id_truepc2          = id_branchTakenEarly ? id_targetAddrEarly2 : id_belowpc2;
-
-    assign id_targetMiss       = (id_targetAddrEarly  != if_id_predpc);
-    assign id_predMiss         = (id_branchTakenEarly != if_id_predTaken)
-                              || (id_branchTakenEarly && id_targetMiss);
-
-    assign id_branch_miss = !trap_en && !mret_en && !branch_miss && !ex_busy
-      && id_branchOpsReady && id_predMiss;
-
   // ===========================================================================
   // ID STAGE
   // ===========================================================================
@@ -648,7 +595,6 @@ module phantom_core (
       id_ex_predTaken   <= (!resetn || flush_id_ex) ? 1'b0       : if_id_predTaken;
       id_ex_phtIdx      <= (!resetn || flush_id_ex) ? '0         : if_id_phtIdx;
       id_ex_phtOld      <= (!resetn || flush_id_ex) ? 2'b01      : if_id_phtOld;
-      id_ex_earlySolve  <= (!resetn || flush_id_ex) ? 1'b0       : id_branch_miss;
 
       id_ex_instr       <= (!resetn || flush_id_ex) ? `NOP_INSTR : if_id_instr;
       id_ex_isComp      <= (!resetn || flush_id_ex) ? 1'b0       : if_id_isComp;
@@ -783,8 +729,7 @@ module phantom_core (
     assign ex_targetMiss  = (ex_targetAddr  != id_ex_predpc);
     assign ex_predMiss    = (ex_branchTaken != id_ex_predTaken)
                          || (ex_branchTaken && ex_targetMiss);
-    assign branch_miss    = !trap_en && !mret_en
-      && !id_ex_earlySolve && ex_predMiss;
+    assign branch_miss    = !trap_en && !mret_en && ex_predMiss;
 
     assign belowpc  = id_ex_isComp   ? id_ex_pc2      : id_ex_pc4;
     assign belowpc2 = id_ex_isComp   ? id_ex_pc4      : id_ex_pc6;
