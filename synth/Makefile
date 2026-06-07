@@ -8,7 +8,7 @@
 # Usage:
 #   make                 - compile program, synthesise, place-and-route
 #   make diagnostic      - synthesize + place-and-route + Fmax & critpath
-#   make diagnostic-full - run SWEEP_SEEDS placements in parallel + report best seed
+#   make benchmark       - run SWEEP_SEEDS placements in parallel + report best seed
 #   make prog            - build + load to FPGA SRAM
 #   make flash           - build + write to SPI flash
 #   make imem            - compile program only → imem.hex  (no synth)
@@ -77,7 +77,7 @@ SWEEP_JOBS  ?= $(shell nproc)
 # TARGETS
 # =============================================================================
 
-.PHONY: all imem synth pnr diagnostic diagnostic-full prog flash clean
+.PHONY: all imem synth pnr diagnostic benchmark prog flash clean
 
 all: $(BITSTREAM)
 
@@ -119,7 +119,7 @@ diagnostic: $(SYNTH_JSON) $(LPF)
 	@echo ""
 	@echo "(full nextpnr log saved to: synth/$(DIAG_LOG))"
 
-diagnostic-full: $(SYNTH_JSON) $(LPF)
+benchmark: $(SYNTH_JSON) $(LPF)
 	@echo "Sweeping seeds 1..$(SWEEP_SEEDS) on $(SWEEP_JOBS) parallel jobs ($(SWEEP_SEEDS) place-and-route passes)..."
 	@rm -rf sweep_tmp && mkdir -p sweep_tmp
 	@seq 1 $(SWEEP_SEEDS) | xargs -P $(SWEEP_JOBS) -I {} \
