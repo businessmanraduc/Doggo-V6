@@ -26,6 +26,8 @@ module phantom_core (
   output logic        dmem_we,        // write enable
   output logic [3:0]  dmem_be,        // per-byte write enables
   input  logic [31:0] dmem_rdata,     // load data (full 32-bit word)
+  output logic        dmem_req,       // 1 = MA holds a load/store
+  input  logic        dmem_ready,     // 1 = memAccess complete this cycle
 
   // ── Interrupt request lines (level-sensitive, drive mip) ─────────────────────
   input  logic        irq_timer,      // machine timer    interrupt (CLINT mtip)
@@ -196,6 +198,8 @@ module phantom_core (
   
     // ── Pipeline control ─────────────────────────────────────────────────────
     logic             stall;            // load-use stall
+    logic             mem_access;       // MA instr is a load/store
+    logic             mem_stall;        // MA memory access not yet complete
     logic             branch_miss;      // EX-stage misprediction
     logic             trap_en;
     logic             mret_en;
@@ -361,7 +365,7 @@ module phantom_core (
     always_ff @(posedge clk) begin
       if (!resetn || branch_miss) begin
         r_bhr <= '0;
-      end else if (!stall && !ex_busy) begin
+      end else if (!stall && !ex_busy && !mem_stall) begin
         r_bhr <= {r_bhr[BHR_W-2:0], pred_taken};
       end
     end
@@ -410,7 +414,7 @@ module phantom_core (
         r_predpc    <= 32'd0;
         r_predpc2   <= 32'd2;
         r_predvalid <= 1'b0;
-      end else if (!stall && !ex_busy) begin
+      end else if (!stall && !ex_busy && !mem_stall) begin
         r_predpc    <= btb_rdata;
         r_predpc2   <= btb_rdata + 32'd2;
         r_predvalid <= btb_valid;
@@ -454,6 +458,7 @@ module phantom_core (
         (trap_en):        begin next_pc = csr_mtvec;     next_pc2 = csr_mtvec2;            end
         (mret_en):        begin next_pc = csr_mepc;      next_pc2 = csr_mepc2;             end
         (branch_miss):    begin next_pc = truepc;        next_pc2 = truepc2;               end
+        (mem_stall):      begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
         (stall):          begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
         (ex_busy):        begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
         (pred_taken):     begin next_pc = r_predpc;      next_pc2 = r_predpc2;             end
@@ -489,7 +494,7 @@ module phantom_core (
 
     assign flush_if_id = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
-      if (!ex_busy) begin
+      if (!ex_busy && !mem_stall) begin
         if (!resetn || flush_if_id) begin             // squash -> insert bubble
           if_id_pc        <= 32'd0;
           if_id_pc2       <= 32'd0;
@@ -588,9 +593,9 @@ module phantom_core (
     );
  
     assign stall      = if_id_valid && (!rs1_ready || !rs2_ready);
-    assign id_wr_en   = if_id_valid && id_regWrite    && !stall && !flush_id_ex && !ex_busy;
+    assign id_wr_en   = if_id_valid && id_regWrite    && !stall && !flush_id_ex && !ex_busy && !mem_stall;
     assign ex_undo_en = id_ex_valid && id_ex_regWrite && (branch_miss || trap_en || mret_en);
-    assign ma_wr_en   = ex_ma_valid && ex_ma_regWrite;
+    assign ma_wr_en   = ex_ma_valid && ex_ma_regWrite && !mem_stall;
 
   // ===========================================================================
   // ID STAGE
@@ -603,7 +608,7 @@ module phantom_core (
 
     assign flush_id_ex = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
-      if (!ex_busy) begin
+      if (!ex_busy && !mem_stall) begin
       id_ex_pc          <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc;
       id_ex_pc2         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc2;
       id_ex_pc4         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc4;
@@ -684,6 +689,7 @@ module phantom_core (
       .clk      (clk),
       .resetn   (resetn),
       .valid_in (muldiv_active),
+      .consume  (!mem_stall),
       .opcode   (id_ex_instr[14:12]),
       .a        (fwd_rs1Value),
       .b        (fwd_rs2Value),
@@ -761,6 +767,7 @@ module phantom_core (
 
     assign flush_ex_ma = trap_en || mret_en || branch_miss || ex_busy;
     always_ff @(posedge clk) begin
+      if (!mem_stall) begin
       ex_ma_pc          <= (!resetn || flush_ex_ma) ? 32'd0      : id_ex_pc;
       ex_ma_linkAddr    <= (!resetn || flush_ex_ma) ? 32'd0      : ex_linkAddr;
  
@@ -800,6 +807,7 @@ module phantom_core (
       ex_ma_isIllegal   <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isIllegal;
       ex_ma_csrLegal    <= (!resetn || flush_ex_ma) ? 1'b0       : ex_csrLegal;
       ex_ma_valid       <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_valid;
+      end
     end
 
   // ===========================================================================
@@ -836,7 +844,7 @@ module phantom_core (
       .mie         (csr_mie),
       .mip         (csr_mip),
       .mstatus_mie (csr_mstatus[3]),
-      .ma_valid    (ex_ma_valid),
+      .ma_valid    (ex_ma_valid && !mem_stall),
       .sync_trap   (sync_trap),
       .irq_take    (irq_take),
       .irq_cause   (irq_cause)
@@ -849,6 +857,11 @@ module phantom_core (
     assign trap_mepc    = sync_mepc;
     assign trap_mcause  = irq_take ? {1'b1, 27'b0, irq_cause} : sync_mcause;
     assign trap_mtval   = irq_take ? 32'd0 : sync_mtval;
+
+    // ── Multi-cycle memory stall ─────────────────────────────────────────────
+    assign mem_access = ex_ma_valid && (ex_ma_memRead || ex_ma_memWrite);
+    assign dmem_req   = mem_access  && !sync_trap;
+    assign mem_stall  = resetn && dmem_req && !dmem_ready;
 
     // ── Branch Miss Detection ────────────────────────────────────────────────
     assign ma_targetMiss = (ex_ma_targetAddr  != ex_ma_predpc);
@@ -933,14 +946,14 @@ module phantom_core (
   // ===========================================================================
 
     always_ff @(posedge clk) begin
-      ma_wb_pc        <= !resetn ? 32'd0  : ex_ma_pc;
-      ma_wb_rdIndex   <= !resetn ? 5'd0   : ex_ma_rdIndex;
-      ma_wb_aluResult <= !resetn ? 32'd0  : ex_ma_aluResult;
-      ma_wb_loadData  <= !resetn ? 32'd0  : load_data;
-      ma_wb_csrData   <= !resetn ? 32'd0  : csr_rdDataRaw;
-      ma_wb_linkAddr  <= !resetn ? 32'd0  : ex_ma_linkAddr;
-      ma_wb_regWrite  <= !resetn ? 1'b0   : ex_ma_regWrite && !trap_en;
-      ma_wb_wbSel     <= !resetn ? 2'b00  : ex_ma_wbSel;
+      ma_wb_pc        <= (!resetn || mem_stall) ? 32'd0  : ex_ma_pc;
+      ma_wb_rdIndex   <= (!resetn || mem_stall) ? 5'd0   : ex_ma_rdIndex;
+      ma_wb_aluResult <= (!resetn || mem_stall) ? 32'd0  : ex_ma_aluResult;
+      ma_wb_loadData  <= (!resetn || mem_stall) ? 32'd0  : load_data;
+      ma_wb_csrData   <= (!resetn || mem_stall) ? 32'd0  : csr_rdDataRaw;
+      ma_wb_linkAddr  <= (!resetn || mem_stall) ? 32'd0  : ex_ma_linkAddr;
+      ma_wb_regWrite  <= (!resetn || mem_stall) ? 1'b0   : ex_ma_regWrite && !trap_en;
+      ma_wb_wbSel     <= (!resetn || mem_stall) ? 2'b00  : ex_ma_wbSel;
     end
 
   // ===========================================================================

@@ -79,6 +79,10 @@ module cpu (
     logic [31:0] bsram_rdata;   // Raw SDPB read data (4 byte lanes combined)
     logic [3:0]  dmem_be;       // Byte enables  (store_be,          combinational MA)
     logic        dmem_we;       // Write enable  (gated by !trap_en, combinational MA)
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic        dmem_req;      // MA load/store strobe
+    /* verilator lint_on  UNUSEDSIGNAL */
+
 
     // ── Address decode ───────────────────────────────────────────────────────
     // bit [31] == 1 → peripheral space. Gates BSRAM write and selects read data.
@@ -117,6 +121,8 @@ module cpu (
       .dmem_be      (dmem_be),
       .dmem_wdata   (dmem_wdata),
       .dmem_rdata   (dmem_rdata),
+      .dmem_req     (dmem_req),
+      .dmem_ready   (1'b1),           // BRAM path is single-cycle
       .irq_timer    (irq_timer),
       .irq_soft     (irq_soft),
       .irq_ext      (irq_ext)

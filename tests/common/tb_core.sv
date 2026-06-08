@@ -12,7 +12,10 @@ module tb_core (
   logic [15:0] imem_data_a, imem_data_b;
   logic [3:0]  dmem_be;
   logic        dmem_we;
-
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic        dmem_req;
+  /* verilator lint_on  UNUSEDSIGNAL */
+ 
   logic [7:0] mem [0:65535];
   initial begin
     $readmemh("program.hex", mem);
@@ -31,6 +34,8 @@ module tb_core (
     .dmem_we     (dmem_we),
     .dmem_be     (dmem_be),
     .dmem_rdata  (dmem_rdata),
+    .dmem_req    (dmem_req),
+    .dmem_ready  (1'b1),
     .irq_timer   (1'b0),
     .irq_soft    (1'b0),
     .irq_ext     (1'b0)

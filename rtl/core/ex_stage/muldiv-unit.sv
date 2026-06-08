@@ -28,6 +28,7 @@ module muldiv_unit (
   input  logic        resetn,
 
   input  logic        valid_in, // 1 = M-instruction inside EX
+  input  logic        consume,  // 1 = EX releases the result to MA this cycle
   input  logic [2:0]  opcode,   // func3 selector
   input  logic [31:0] a,        // rs1 value (post-forwarding)
   input  logic [31:0] b,        // rs2 value (post-forwarding)
@@ -162,7 +163,7 @@ module muldiv_unit (
             product_q <= product[63:0];
             state     <= S_MUL2;
           end
-          S_MUL2: state <= S_IDLE;
+          S_MUL2: if (consume) state <= S_IDLE;
 
           // ── One quotient bit per cycle ───────────────────────────────────────
           S_ITER: begin
@@ -174,7 +175,7 @@ module muldiv_unit (
           end
 
           // ── Divide result consumed this cycle ──────────────────────────────
-          S_DONE:  state <= S_IDLE;
+          S_DONE: if(consume) state <= S_IDLE;
 
           default: state <= S_IDLE;
         endcase

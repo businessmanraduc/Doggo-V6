@@ -18,7 +18,7 @@
 `define SOC_ONBOARD_LEDS        32'h8000_3000   // onboard LEDs (0 to 7)
 
 // ── Clocking / baud ───────────────────────────────────────────────────────────
-`define SOC_CPU_CLK_HZ          50_000_000      // cpu_clk after the PLL
+`define SOC_CPU_CLK_HZ          60_000_000      // cpu_clk after the PLL
 `define SOC_CLINT_TICK_HZ        1_000_000      // CLINT mtime tick rate
 `define SOC_UART_CLKS_PER_BIT   (`SOC_CPU_CLK_HZ / 115_200) // 115200 8-N-1
 

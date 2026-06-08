@@ -20,6 +20,9 @@ module tb_irq (
   logic [31:0] dmem_rdata;
   logic [3:0]  dmem_be;
   logic        dmem_we;
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic        dmem_req;
+  /* verilator lint_on  UNUSEDSIGNAL */
   logic        irq_timer, irq_soft;
 
   logic addr_is_periph; assign addr_is_periph = dmem_waddr[31];
@@ -69,6 +72,8 @@ module tb_irq (
     .dmem_we     (dmem_we),
     .dmem_be     (dmem_be),
     .dmem_rdata  (dmem_rdata),
+    .dmem_req    (dmem_req),
+    .dmem_ready  (1'b1),
     .irq_timer   (irq_timer),
     .irq_soft    (irq_soft),
     .irq_ext     (1'b0)
