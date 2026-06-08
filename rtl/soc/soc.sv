@@ -39,16 +39,16 @@ module soc (
       .OUTDIVIDER_MUXB ("DIVB"),
       .OUTDIVIDER_MUXC ("DIVC"),
       .OUTDIVIDER_MUXD ("DIVD"),
-      .CLKI_DIV        (1),
+      .CLKI_DIV        (5),
       .CLKOP_ENABLE    ("ENABLED"),
-      .CLKOP_DIV       (12),
-      .CLKOP_CPHASE    (5),
+      .CLKOP_DIV       (10),
+      .CLKOP_CPHASE    (4),
       .CLKOP_FPHASE    (0),
       .CLKOS_ENABLE    ("DISABLED"),
       .CLKOS2_ENABLE   ("DISABLED"),
       .CLKOS3_ENABLE   ("DISABLED"),
       .FEEDBK_PATH     ("CLKOP"),
-      .CLKFB_DIV       (2)
+      .CLKFB_DIV       (12)
     ) u_pll (
       .CLKI        (clk_25),
       .CLKFB       (cpu_clk),   // internal feedback from CLKOP output

@@ -72,6 +72,7 @@ DIAG_CFG   = soc.diag.config
 # ── Seed sweep settings ───────────────────────────────────────────────────────
 SWEEP_SEEDS ?= 25
 SWEEP_JOBS  ?= $(shell nproc)
+SEED        ?=
 
 # =============================================================================
 # TARGETS
@@ -103,10 +104,11 @@ $(SYNTH_JSON): synth.ys
 pnr: $(BITSTREAM)
 
 $(BITSTREAM): $(SYNTH_JSON) $(LPF)
-	$(NEXTPNR) $(DEVICE) $(PACKAGE)  \
-	           --json $(SYNTH_JSON)  \
-	           --lpf  $(LPF)         \
-             --timing-allow-fail   \
+	$(NEXTPNR) $(DEVICE) $(PACKAGE)         \
+	           --json $(SYNTH_JSON)         \
+	           --lpf  $(LPF)                \
+	           $(if $(SEED),--seed $(SEED)) \
+             --timing-allow-fail          \
              --textcfg $(SYNTH_CFG)
 	$(ECPPACK) $(SYNTH_CFG) $(BITSTREAM)
 

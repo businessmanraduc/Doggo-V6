@@ -28,10 +28,10 @@ test_dir_0:
 
 after_tests:
   sw    a1, 0(s0)
-  li    t0, 3000000
+  li    t0, 2000000
 1:
-  addi t0, t0, -1
-  bnez t0, 1b
+  addi t0,  t0, -1
+  bnez t0,  1b
 
   j     main_loop
 

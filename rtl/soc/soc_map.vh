@@ -20,6 +20,6 @@
 // ── Clocking / baud ───────────────────────────────────────────────────────────
 `define SOC_CPU_CLK_HZ          50_000_000      // cpu_clk after the PLL
 `define SOC_CLINT_TICK_HZ        1_000_000      // CLINT mtime tick rate
-`define SOC_UART_CLKS_PER_BIT    434            // round(50e6 / 115200), 115200 8-N-1
+`define SOC_UART_CLKS_PER_BIT   (`SOC_CPU_CLK_HZ / 115_200) // 115200 8-N-1
 
 `endif // SOC_MAP_VH
