@@ -12,7 +12,7 @@ module tb_sdram (
   localparam int BURST_LEN = 8;
   localparam int N_BURSTS  = 4;
   localparam int TOTAL     = N_BURSTS * BURST_LEN;
-  localparam logic [23:0] BASE = 24'h000040;
+  localparam logic [23:0] BASE       = 24'h000040;
   localparam logic [7:0]  LAST_BURST = 8'(N_BURSTS-1);
   localparam logic [7:0]  TOTAL_8    = 8'(TOTAL);
 
@@ -53,8 +53,8 @@ module tb_sdram (
     .ba(ba), .a(a), .dqm(dqm), .dq_in(dq_c2m), .dq_oe(dq_oe), .dq_out(dq_m2c)
   );
 
-  /* verilator lint_off UNUSEDSIGNAL */
   // Known-answer pattern keyed on absolute word address.
+  /* verilator lint_off UNUSEDSIGNAL */
   function automatic [15:0] patt(input [23:0] addr);
     patt = 16'h1234 + (addr[15:0] * 16'h0007);
   endfunction

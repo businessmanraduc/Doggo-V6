@@ -43,7 +43,7 @@ module sdram_model #(
   // Linear base address for the current command's first word.
   logic [23:0] lin_base;
   assign lin_base = {ba, open_row[ba], a[8:0]};
-  
+
   localparam logic [3:0] LAST_I = 4'(BURST_LEN-1);
 
   // ── Write burst capture ─────────────────────────────────────────────────────

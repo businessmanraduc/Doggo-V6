@@ -18,7 +18,7 @@ module soc (
   input  logic       clk_25,   // 25 MHz board crystal oscillator (ULX3S)
   input  logic       resetn,   // active-low board reset button
   output logic       uart_tx,  // UART serial output pin (115200 8-N-1)
-  output logic [7:0] led       // 8 onboard LEDs
+  output logic [7:0] led,      // 8 onboard LEDs
 
   // ── External SDR SDRAM (W9825G6KH, 32 MB, 16-bit) ──────────────────────────
   output logic        sdram_clk,   // phase-shifted chip clock (CLKOS, ~180 deg)
@@ -104,18 +104,19 @@ module soc (
   //   (b) 32 cpu_clk cycles have elapsed (pipeline flush margin)
   // Asserting the board reset button (resetn=0) re-triggers the sequencer.
   // ===========================================================================
-    logic [4:0] rst_cnt;
+    localparam logic [26:0] RESET_HOLD = 27'd120_000_000;
+    logic [26:0] rst_cnt;
     logic cpu_resetn;
 
     always_ff @(posedge cpu_clk) begin
       if (!pll_lock || !resetn) begin
-        rst_cnt      <= 5'd0;
+        rst_cnt      <= 27'd0;
         cpu_resetn   <= 1'b0;
       end else if (!cpu_resetn) begin
-        if (rst_cnt == 5'd31)
+        if (rst_cnt == RESET_HOLD)
           cpu_resetn <= 1'b1;
         else
-          rst_cnt    <= rst_cnt + 5'd1;
+          rst_cnt    <= rst_cnt + 27'd1;
       end
     end
   // ===========================================================================
@@ -160,11 +161,11 @@ module soc (
       .mem_be       (mem_be),
       .mem_rdata    (mem_rdata),
       .mem_ready    (mem_ready)
- );
+    );
   // ===========================================================================
   // CPU
   // ===========================================================================
- 
+
 
   // ===========================================================================
   // SDRAM  ──  adapter (32-bit single access) + controller + bidir DQ
@@ -219,6 +220,7 @@ module soc (
   // SDRAM
   // ===========================================================================
  
+
   // ===========================================================================
   // PERIPHERAL ADDRESS DECODE
   // ===========================================================================
