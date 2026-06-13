@@ -12,7 +12,9 @@ module sdram_adapter (
   input  logic        resetn,
 
   // ── CPU side: one 32-bit access (only driven for the SDRAM region) ─────────
+  /* verilator lint_off UNUSEDSIGNAL */
   input  logic [31:0] cpu_addr,     // byte offset within SDRAM
+  /* verilator lint_on  UNUSEDSIGNAL */
   input  logic        cpu_req,      // load/store to SDRAM in MA this cycle
   input  logic        cpu_we,       // 1 = store
   input  logic [31:0] cpu_wdata,
@@ -27,8 +29,10 @@ module sdram_adapter (
   input  logic        u_ready,
   input  logic [15:0] u_rdata,
   input  logic        u_rvalid,
+  /* verilator lint_off UNUSEDSIGNAL */
   input  logic [2:0]  u_wbeat,
   input  logic        u_wstrobe,
+  /* verilator lint_on  UNUSEDSIGNAL */
   output logic [15:0] u_wdata,
   output logic [1:0]  u_wdqm
 );
@@ -46,7 +50,7 @@ module sdram_adapter (
   always_comb begin
     u_req     = 1'b0;
     u_we      = cpu_we;
-    u_addr    = cpu_addr[24:1];
+    u_addr    = {cpu_addr[24:2], 1'b0};
     cpu_ready = 1'b0;
     cpu_rdata = {u_rdata, rd_lo};
 

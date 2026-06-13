@@ -49,7 +49,16 @@ module cpu (
   output logic [31:0] periph_wdata, // store data
   output logic        periph_we,    // write enable
   output logic [3:0]  periph_be,    // byte enables
-  input  logic [31:0] periph_rdata  // read data from soc peripheral decode
+  input  logic [31:0] periph_rdata, // read data from soc peripheral decode
+
+  // ── SDRAM memory bus ───────────────────────────────────────────────────────
+  output logic [31:0] mem_addr,     // MA byte address (ex_ma_dmemAddr)
+  output logic        mem_req,      // 1 = SDRAM load/store in MA this cycle
+  output logic        mem_we,       // 1 = store
+  output logic [31:0] mem_wdata,    // store data (byte-lane shifted)
+  output logic [3:0]  mem_be,       // byte enables
+  input  logic [31:0] mem_rdata,    // assembled load word (valid with mem_ready)
+  input  logic        mem_ready     // 1 = SDRAM access complete this cycle
 );
 
   // ===========================================================================
@@ -79,24 +88,33 @@ module cpu (
     logic [31:0] bsram_rdata;   // Raw SDPB read data (4 byte lanes combined)
     logic [3:0]  dmem_be;       // Byte enables  (store_be,          combinational MA)
     logic        dmem_we;       // Write enable  (gated by !trap_en, combinational MA)
-    /* verilator lint_off UNUSEDSIGNAL */
     logic        dmem_req;      // MA load/store strobe
-    /* verilator lint_on  UNUSEDSIGNAL */
 
 
     // ── Address decode ───────────────────────────────────────────────────────
     // bit [31] == 1 → peripheral space. Gates BSRAM write and selects read data.
     logic  addr_is_periph;
+    logic  addr_is_sdram;
     assign addr_is_periph = dmem_wr_addr[`SOC_PERIPH_SEL_BIT];
- 
+    assign addr_is_sdram  = dmem_wr_addr[`SOC_SDRAM_SEL_BIT] && !addr_is_periph;
+
     // ── Peripheral bus outputs ───────────────────────────────────────────────
     assign periph_addr  = dmem_wr_addr;
     assign periph_wdata = dmem_wdata;
     assign periph_we    = dmem_we && addr_is_periph;
     assign periph_be    = dmem_be;
  
-    // ── Read data mux: BSRAM or peripheral ───────────────────────────────────
-    assign dmem_rdata = addr_is_periph ? periph_rdata : bsram_rdata;
+    // ── SDRAM bus outputs (to soc.sv's adapter) ──────────────────────────────
+    assign mem_addr     = dmem_wr_addr;
+    assign mem_req      = dmem_req && addr_is_sdram;
+    assign mem_we       = dmem_we;
+    assign mem_wdata    = dmem_wdata;
+    assign mem_be       = dmem_be;
+
+    // ── Read data mux: SDRAM, peripheral, or BSRAM ───────────────────────────
+    assign dmem_rdata = addr_is_periph ? periph_rdata
+                      : addr_is_sdram  ? mem_rdata
+                      :                  bsram_rdata;
 
   // ===========================================================================
   // INTERNAL MEMORY BUS SIGNALS
@@ -122,7 +140,7 @@ module cpu (
       .dmem_wdata   (dmem_wdata),
       .dmem_rdata   (dmem_rdata),
       .dmem_req     (dmem_req),
-      .dmem_ready   (1'b1),           // BRAM path is single-cycle
+      .dmem_ready   (addr_is_sdram ? mem_ready : 1'b1),
       .irq_timer    (irq_timer),
       .irq_soft     (irq_soft),
       .irq_ext      (irq_ext)
@@ -184,7 +202,7 @@ module cpu (
     (* ram_style = "block" *) logic [31:0] dmem_mem [0:1023];
 
     always_ff @(posedge clk) begin
-      if (dmem_we && !addr_is_periph) begin
+      if (dmem_we && !addr_is_periph && !addr_is_sdram) begin
         if (dmem_be[0]) dmem_mem[dmem_wr_addr[11:2]][7:0]   <= dmem_wdata[7:0];
         if (dmem_be[1]) dmem_mem[dmem_wr_addr[11:2]][15:8]  <= dmem_wdata[15:8];
         if (dmem_be[2]) dmem_mem[dmem_wr_addr[11:2]][23:16] <= dmem_wdata[23:16];

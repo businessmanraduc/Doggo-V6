@@ -11,12 +11,12 @@
 
 ROOT   = ../..
 RTL    = $(ROOT)/rtl/soc/mem/sdram-ctrl.sv
-SIM    = sdram_model.sv tb_sdram.sv
+SIM    = sdram-model.sv tb_sdram.sv
 MAIN   = sim_main.cpp
 TOP    = tb_sdram
 
 ADAPT_RTL  = $(ROOT)/rtl/soc/mem/sdram-ctrl.sv $(ROOT)/rtl/soc/mem/sdram-adapter.sv
-ADAPT_SIM  = sdram_model.sv tb_adapter.sv
+ADAPT_SIM  = sdram-model.sv tb_adapter.sv
 ADAPT_MAIN = sim_main_adapter.cpp
 
 VERILATOR = verilator

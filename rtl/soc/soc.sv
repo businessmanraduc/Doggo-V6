@@ -19,6 +19,18 @@ module soc (
   input  logic       resetn,   // active-low board reset button
   output logic       uart_tx,  // UART serial output pin (115200 8-N-1)
   output logic [7:0] led       // 8 onboard LEDs
+
+  // ── External SDR SDRAM (W9825G6KH, 32 MB, 16-bit) ──────────────────────────
+  output logic        sdram_clk,   // phase-shifted chip clock (CLKOS, ~180 deg)
+  output logic        sdram_cke,
+  output logic        sdram_csn,
+  output logic        sdram_rasn,
+  output logic        sdram_casn,
+  output logic        sdram_wen,
+  output logic [1:0]  sdram_ba,
+  output logic [12:0] sdram_a,
+  output logic [1:0]  sdram_dqm,
+  inout  logic [15:0] sdram_d
 );
  
   // ===========================================================================
@@ -44,7 +56,10 @@ module soc (
       .CLKOP_DIV       (10),
       .CLKOP_CPHASE    (4),
       .CLKOP_FPHASE    (0),
-      .CLKOS_ENABLE    ("DISABLED"),
+      .CLKOS_ENABLE    ("ENABLED"),
+      .CLKOS_DIV       (10),
+      .CLKOS_CPHASE    (9),
+      .CLKOS_FPHASE    (0),
       .CLKOS2_ENABLE   ("DISABLED"),
       .CLKOS3_ENABLE   ("DISABLED"),
       .FEEDBK_PATH     ("CLKOP"),
@@ -54,8 +69,8 @@ module soc (
       .CLKFB       (cpu_clk),   // internal feedback from CLKOP output
       .CLKOP       (cpu_clk),
       .LOCK        (pll_lock),
+      .CLKOS       (sdram_clk), // phase-shifted SDRAM chip clock
       // ── Unused secondary clock outputs ─────────────────────────────────────
-      .CLKOS       (),
       .CLKOS2      (),
       .CLKOS3      (),
       .INTLOCK     (),
@@ -122,6 +137,11 @@ module soc (
     logic        clint_mtip;
     logic        clint_msip;
 
+    // ── SDRAM memory bus (cpu <-> sdram_adapter) ─────────────────────────────
+    logic [31:0] mem_addr, mem_wdata, mem_rdata;
+    logic        mem_req, mem_we, mem_ready;
+    logic [3:0]  mem_be;
+
     cpu u_cpu (
       .clk          (cpu_clk),
       .resetn       (cpu_resetn),
@@ -132,13 +152,73 @@ module soc (
       .periph_wdata (periph_wdata),
       .periph_we    (periph_we),
       .periph_be    (periph_be),
-      .periph_rdata (periph_rdata)
-    );
+      .periph_rdata (periph_rdata),
+      .mem_addr     (mem_addr),
+      .mem_req      (mem_req),
+      .mem_we       (mem_we),
+      .mem_wdata    (mem_wdata),
+      .mem_be       (mem_be),
+      .mem_rdata    (mem_rdata),
+      .mem_ready    (mem_ready)
+ );
   // ===========================================================================
   // CPU
   // ===========================================================================
  
 
+  // ===========================================================================
+  // SDRAM  ──  adapter (32-bit single access) + controller + bidir DQ
+  // ===========================================================================
+  // The CPU's SDRAM-region load/store (mem bus, valid in MA) is turned into a
+  // 2-beat 16-bit burst by sdram_adapter and served by sdram_ctrl. mem_ready
+  // stays low for the whole burst, which the core turns into a mem_stall.
+  //
+  // Controller timing is scaled to the 60 MHz cpu_clk:
+  //   INIT_CYCLES  12000  ~= 200 us power-up wait
+  //   REFRESH_CYC    420  <  tREFI (~468 cycles at 60 MHz)
+  // The SDRAM chip clock (sdram_clk) is the PLL's 180-deg CLKOS output.
+  // ===========================================================================
+    logic [23:0] u_addr;
+    logic        u_we, u_req, u_ready, u_rvalid, u_wstrobe;
+    logic [15:0] u_rdata, u_wdata;
+    logic [2:0]  u_wbeat;
+    logic [1:0]  u_wdqm;
+
+    // bidirectional DQ: merge the controller's split bus onto the real inout pin
+    logic [15:0] dq_out, dq_in;
+    logic        dq_oe;
+    assign sdram_d = dq_oe ? dq_out : 16'bz;
+    assign dq_in   = sdram_d;
+
+    sdram_adapter u_adapter (
+      .clk(cpu_clk), .resetn(cpu_resetn),
+      .cpu_addr(mem_addr), .cpu_req(mem_req), .cpu_we(mem_we),
+      .cpu_wdata(mem_wdata), .cpu_be(mem_be),
+      .cpu_rdata(mem_rdata), .cpu_ready(mem_ready),
+      .u_addr(u_addr), .u_we(u_we), .u_req(u_req), .u_ready(u_ready),
+      .u_rdata(u_rdata), .u_rvalid(u_rvalid),
+      .u_wbeat(u_wbeat), .u_wstrobe(u_wstrobe), .u_wdata(u_wdata), .u_wdqm(u_wdqm)
+    );
+
+    sdram_ctrl #(
+      .BURST_LEN   (2),
+      .INIT_CYCLES (12000),
+      .CAS_LATENCY (2),
+      .REFRESH_CYC (420)
+    ) u_sdram (
+      .clk(cpu_clk), .resetn(cpu_resetn),
+      .u_addr(u_addr), .u_we(u_we), .u_req(u_req), .u_ready(u_ready),
+      .u_rdata(u_rdata), .u_rvalid(u_rvalid),
+      .u_wbeat(u_wbeat), .u_wstrobe(u_wstrobe), .u_wdata(u_wdata), .u_wdqm(u_wdqm),
+      .sdram_cke(sdram_cke), .sdram_cs_n(sdram_csn), .sdram_ras_n(sdram_rasn),
+      .sdram_cas_n(sdram_casn), .sdram_we_n(sdram_wen), .sdram_ba(sdram_ba),
+      .sdram_a(sdram_a), .sdram_dqm(sdram_dqm),
+      .sdram_dq_out(dq_out), .sdram_dq_oe(dq_oe), .sdram_dq_in(dq_in)
+    );
+  // ===========================================================================
+  // SDRAM
+  // ===========================================================================
+ 
   // ===========================================================================
   // PERIPHERAL ADDRESS DECODE
   // ===========================================================================

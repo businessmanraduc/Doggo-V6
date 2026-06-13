@@ -52,7 +52,9 @@ SV_SOURCES = \
   $(CORE)/phantom-core.sv             \
   $(SOC)/periph/uart-tx.sv            \
   $(SOC)/periph/clint.sv              \
-  $(SOC)/cpu.sv                       \
+  $(SOC)/mem/sdram-ctrl.sv            \
+	$(SOC)/mem/sdram-adapter.sv         \
+	$(SOC)/cpu.sv                       \
   $(SOC)/soc.sv
 
 # ── ECP5 target ───────────────────────────────────────────────────────────────

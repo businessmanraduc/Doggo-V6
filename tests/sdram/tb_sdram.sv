@@ -13,13 +13,17 @@ module tb_sdram (
   localparam int N_BURSTS  = 4;
   localparam int TOTAL     = N_BURSTS * BURST_LEN;
   localparam logic [23:0] BASE = 24'h000040;
+  localparam logic [7:0]  LAST_BURST = 8'(N_BURSTS-1);
+  localparam logic [7:0]  TOTAL_8    = 8'(TOTAL);
 
   logic [23:0] u_addr;
   logic        u_we, u_req, u_ready;
   logic [15:0] u_rdata;
   logic        u_rvalid;
   logic [2:0]  u_wbeat;
+  /* verilator lint_off UNUSEDSIGNAL */
   logic        u_wstrobe;
+  /* verilator lint_on  UNUSEDSIGNAL */
   logic [15:0] u_wdata;
 
   logic        cke, cs_n, ras_n, cas_n, we_n;
@@ -49,10 +53,12 @@ module tb_sdram (
     .ba(ba), .a(a), .dqm(dqm), .dq_in(dq_c2m), .dq_oe(dq_oe), .dq_out(dq_m2c)
   );
 
+  /* verilator lint_off UNUSEDSIGNAL */
   // Known-answer pattern keyed on absolute word address.
   function automatic [15:0] patt(input [23:0] addr);
     patt = 16'h1234 + (addr[15:0] * 16'h0007);
   endfunction
+  /* verilator lint_on  UNUSEDSIGNAL */
 
   typedef enum logic [2:0] { T_INIT, T_WREQ, T_WBUSY, T_RREQ, T_RBUSY, T_DONE } tstate_t;
   tstate_t     tstate;
@@ -61,7 +67,7 @@ module tb_sdram (
   logic [7:0]  pass_cnt;
 
   logic [23:0] cur_addr;
-  assign cur_addr = BASE + 24'(burst_idx) * BURST_LEN;
+  assign cur_addr = BASE + 24'(burst_idx) * 24'(BURST_LEN);
 
   assign u_req   = (tstate == T_WREQ) || (tstate == T_RREQ);
   assign u_we    = (tstate == T_WREQ);
@@ -77,7 +83,7 @@ module tb_sdram (
 
         T_WREQ:  if (u_ready) tstate <= T_WBUSY;
         T_WBUSY: if (u_ready) begin
-          if (burst_idx == N_BURSTS-1) begin burst_idx <= 8'd0; tstate <= T_RREQ; end
+          if (burst_idx == LAST_BURST) begin burst_idx <= 8'd0; tstate <= T_RREQ; end
           else                          begin burst_idx <= burst_idx + 8'd1; tstate <= T_WREQ; end
         end
 
@@ -91,14 +97,14 @@ module tb_sdram (
             rbeat <= rbeat + 4'd1;
           end
           if (u_ready) begin
-            if (burst_idx == N_BURSTS-1) tstate <= T_DONE;
+            if (burst_idx == LAST_BURST) tstate <= T_DONE;
             else begin burst_idx <= burst_idx + 8'd1; tstate <= T_RREQ; end
           end
         end
 
         T_DONE: begin
           $display("SDRAM v2 burst self-test: %0d/%0d words OK.  Result: %h",
-                   pass_cnt, TOTAL, (pass_cnt == TOTAL) ? 32'h1 : 32'h0);
+                   pass_cnt, TOTAL, (pass_cnt == TOTAL_8) ? 32'h1 : 32'h0);
           $finish;
         end
         default: tstate <= T_INIT;

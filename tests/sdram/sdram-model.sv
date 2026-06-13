@@ -21,7 +21,9 @@ module sdram_model #(
   input  logic [12:0] a,
   input  logic [1:0]  dqm,
   input  logic [15:0] dq_in,
+  /* verilator lint_off UNUSEDSIGNAL */
   input  logic        dq_oe,
+  /* verilator lint_on  UNUSEDSIGNAL */
   output logic [15:0] dq_out
 );
 
@@ -41,12 +43,16 @@ module sdram_model #(
   // Linear base address for the current command's first word.
   logic [23:0] lin_base;
   assign lin_base = {ba, open_row[ba], a[8:0]};
+  
+  localparam logic [3:0] LAST_I = 4'(BURST_LEN-1);
 
   // ── Write burst capture ─────────────────────────────────────────────────────
   logic        wr_busy;
   logic [23:0] wr_base;
   logic [3:0]  wr_i;
+  /* verilator lint_off UNUSEDSIGNAL */
   logic [23:0] wr_lin;
+  /* verilator lint_on  UNUSEDSIGNAL */
   assign       wr_lin = wr_base + 24'(wr_i);
 
   // ── Read burst injection into the CAS-latency pipeline ──────────────────────
@@ -60,7 +66,9 @@ module sdram_model #(
 
   // what to inject into pipeline stage 0 this cycle
   logic        inj_vld;
+  /* verilator lint_off UNUSEDSIGNAL */
   logic [23:0] inj_addr;
+  /* verilator lint_on  UNUSEDSIGNAL */
   always_comb begin
     inj_vld  = 1'b0;
     inj_addr = 24'd0;
@@ -82,7 +90,7 @@ module sdram_model #(
     end else if (wr_busy) begin
       if (!dqm[0]) mem[wr_lin[MODEL_AW-1:0]][7:0]  <= dq_in[7:0];
       if (!dqm[1]) mem[wr_lin[MODEL_AW-1:0]][15:8] <= dq_in[15:8];
-      if (wr_i == BURST_LEN-1) wr_busy <= 1'b0;
+      if (wr_i == LAST_I) wr_busy <= 1'b0;
       wr_i <= wr_i + 4'd1;
     end
 
@@ -92,7 +100,7 @@ module sdram_model #(
       rd_base <= lin_base;
       rd_i    <= 4'd1;
     end else if (rd_busy) begin
-      if (rd_i == BURST_LEN-1) rd_busy <= 1'b0;
+      if (rd_i == LAST_I) rd_busy <= 1'b0;
       rd_i <= rd_i + 4'd1;
     end
 

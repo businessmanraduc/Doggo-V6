@@ -97,7 +97,9 @@ module sdram_ctrl #(
 
   // Write data buffer (filled in S_WLOAD, streamed in S_WR)
   logic [15:0] wbuf   [0:BURST_LEN-1];
-  logic [15:0] dqmbuf [0:BURST_LEN-1];
+  logic [1:0]  dqmbuf [0:BURST_LEN-1];
+
+  localparam logic [BEAT_W:0] LAST_BEAT = (BEAT_W+1)'(BURST_LEN-1);
 
   logic [12:0] col_addr;
   assign col_addr  = {2'b00, 1'b1, 1'b0, req_col};
@@ -216,8 +218,8 @@ module sdram_ctrl #(
         S_WLOAD: begin
           wbuf[beat[BEAT_W-1:0]]   <= u_wdata;  // u_wbeat/u_wstrobe are combinational
           dqmbuf[beat[BEAT_W-1:0]] <= u_wdqm;
-          if (beat == BURST_LEN-1) begin beat <= '0; state <= S_ACT; end
-          else                          beat <= beat + 1'b1;
+          if (beat == LAST_BEAT) begin beat <= '0; state <= S_ACT; end
+          else                         beat <= beat + 1'b1;
         end
 
         // ── Open the row ──────────────────────────────────────────────────────
@@ -243,7 +245,7 @@ module sdram_ctrl #(
             cmd     <= CMD_WRITE;     // command + first word on the same cycle
             sdram_a <= col_addr;      // A10=1 auto-precharge
           end
-          if (beat == BURST_LEN-1) begin
+          if (beat == LAST_BEAT) begin
             beat     <= '0;
             wait_cnt <= T_WR[15:0] + T_RP[15:0];
             state    <= S_RECOVER;
@@ -268,7 +270,7 @@ module sdram_ctrl #(
         S_RD_DATA: begin
           u_rdata  <= sdram_dq_in;
           u_rvalid <= 1'b1;
-          if (beat == BURST_LEN-1) begin
+          if (beat == LAST_BEAT) begin
             beat     <= '0;
             wait_cnt <= T_RP[15:0];
             state    <= S_RECOVER;
