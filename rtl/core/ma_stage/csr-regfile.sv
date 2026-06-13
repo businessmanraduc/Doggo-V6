@@ -31,8 +31,7 @@ module csr_regfile (
 
   // ── Normal CSR read/write (from MA stage) ────────────────────────────────────
   input  logic [11:0] rd_addr,        // CSR address to read
-  output logic [31:0] rd_data,        // value at rd_addr (combinational, WBR forwarding)
-  output logic [31:0] rd_data_raw,    // value at rd_addr (raw,        NO WBR forwarding)
+  output logic [31:0] rd_data,        // value at rd_addr
 
   input  logic [11:0] wr_addr,        // CSR address to write
   input  logic [31:0] wr_data,        // new value (after RMW by MA stage)
@@ -68,7 +67,7 @@ module csr_regfile (
   // =============================================================================
   localparam MSTATUS_MASK  = 32'h0000_1888;  // bits 12:11 (MPP) + 7 (MPIE) + 3 (MIE)
   localparam MIE_MASK      = 32'h0000_0888;  // bits 11 (MEIE) + 7 (MTIE) + 3 (MSIE)
-  localparam MTVEC_MASK    = 32'hFFFF_FFFD;  // all except bit 1 (enforces mode ∈ {00,01})
+  localparam MTVEC_MASK    = 32'hFFFF_FFFC;  // pin MODE = 00; direct only
   localparam MEPC_MASK     = 32'hFFFF_FFFE;  // bit 0 always 0 (halfword alignment)
   localparam MCAUSE_MASK   = 32'h8000_000F;  // bit 31 (interrupt) + bits 3:0 (code)
   localparam MTVAL_MASK    = 32'hFFFF_FFFF;  // fully writable
@@ -154,40 +153,6 @@ module csr_regfile (
   end
 
 
-  // =============================================================================
-  // COMBINATIONAL READ
-  // =============================================================================
-  // If a CSR write is happening this cycle to the same address we're reading,
-  // return the incoming wr_data immediately (before it latches on next edge).
-  // This eliminates MA→ID forwarding hazards for back-to-back CSR instructions.
-  // =============================================================================
-  always_comb begin
-    case (rd_addr)
-      // ── Read-Write CSRs (with forwarding) ────────────────────────────────────
-      `CSR_MSTATUS:   rd_data = (wr_en && wr_addr == `CSR_MSTATUS)  ? ((wr_data & 32'h0000_0088) | 32'h0000_1800) : r_mstatus;
-      //`CSR_MSTATUS:   rd_data = (wr_en && wr_addr == `CSR_MSTATUS)  ? (wr_data & MSTATUS_MASK)  : r_mstatus;
-      // while this is the correct one on the long run, the current
-      // phantom_core does NOT support S/U mode, only M-mode
-      `CSR_MIE:       rd_data = (wr_en && wr_addr == `CSR_MIE)      ? (wr_data & MIE_MASK)      : r_mie;
-      `CSR_MTVEC:     rd_data = (wr_en && wr_addr == `CSR_MTVEC)    ? (wr_data & MTVEC_MASK)    : r_mtvec;
-      `CSR_MSCRATCH:  rd_data = (wr_en && wr_addr == `CSR_MSCRATCH) ? (wr_data & MSCRATCH_MASK) : r_mscratch;
-      `CSR_MEPC:      rd_data = (wr_en && wr_addr == `CSR_MEPC)     ? (wr_data & MEPC_MASK)     : r_mepc;
-      `CSR_MCAUSE:    rd_data = (wr_en && wr_addr == `CSR_MCAUSE)   ? (wr_data & MCAUSE_MASK)   : r_mcause;
-      `CSR_MTVAL:     rd_data = (wr_en && wr_addr == `CSR_MTVAL)    ? (wr_data & MTVAL_MASK)    : r_mtval;
-      `CSR_MIP:       rd_data = mip_val;    // read-only, hardware-driven
-
-      // ── Read-Only CSRs (no forwarding needed) ────────────────────────────────
-      `CSR_MISA:      rd_data = `CSR_VAL_MISA;
-      `CSR_MVENDORID: rd_data = `CSR_VAL_MVENDORID;
-      `CSR_MARCHID:   rd_data = `CSR_VAL_MARCHID;
-      `CSR_MIMPID:    rd_data = `CSR_VAL_MIMPID;
-      `CSR_MHARTID:   rd_data = `CSR_VAL_MHARTID;
-
-      default:        rd_data = 32'h0;
-    endcase
-  end
-
-
   // ===========================================================================
   // RAW READ  (no write-before-read forwarding)
   // ===========================================================================
@@ -198,20 +163,20 @@ module csr_regfile (
   // ===========================================================================
   always_comb begin
     case (rd_addr)
-      `CSR_MSTATUS:   rd_data_raw = r_mstatus;
-      `CSR_MIE:       rd_data_raw = r_mie;
-      `CSR_MTVEC:     rd_data_raw = r_mtvec;
-      `CSR_MSCRATCH:  rd_data_raw = r_mscratch;
-      `CSR_MEPC:      rd_data_raw = r_mepc;
-      `CSR_MCAUSE:    rd_data_raw = r_mcause;
-      `CSR_MTVAL:     rd_data_raw = r_mtval;
-      `CSR_MIP:       rd_data_raw = mip_val;
-      `CSR_MISA:      rd_data_raw = `CSR_VAL_MISA;
-      `CSR_MVENDORID: rd_data_raw = `CSR_VAL_MVENDORID;
-      `CSR_MARCHID:   rd_data_raw = `CSR_VAL_MARCHID;
-      `CSR_MIMPID:    rd_data_raw = `CSR_VAL_MIMPID;
-      `CSR_MHARTID:   rd_data_raw = `CSR_VAL_MHARTID;
-      default:        rd_data_raw = 32'h0;
+      `CSR_MSTATUS:   rd_data = r_mstatus;
+      `CSR_MIE:       rd_data = r_mie;
+      `CSR_MTVEC:     rd_data = r_mtvec;
+      `CSR_MSCRATCH:  rd_data = r_mscratch;
+      `CSR_MEPC:      rd_data = r_mepc;
+      `CSR_MCAUSE:    rd_data = r_mcause;
+      `CSR_MTVAL:     rd_data = r_mtval;
+      `CSR_MIP:       rd_data = mip_val;
+      `CSR_MISA:      rd_data = `CSR_VAL_MISA;
+      `CSR_MVENDORID: rd_data = `CSR_VAL_MVENDORID;
+      `CSR_MARCHID:   rd_data = `CSR_VAL_MARCHID;
+      `CSR_MIMPID:    rd_data = `CSR_VAL_MIMPID;
+      `CSR_MHARTID:   rd_data = `CSR_VAL_MHARTID;
+      default:        rd_data = 32'h0;
     endcase
   end
 

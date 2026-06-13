@@ -17,7 +17,7 @@ module sdram_ctrl #(
   parameter int T_RFC        = 8,     // AUTO-REFRESH duration    (tRFC ~60ns)
   parameter int T_MRD        = 2,     // LOAD MODE REGISTER recovery
   parameter int T_WR         = 2,     // WRITE     -> PRECHARGE   (write recovery)
-  parameter int REFRESH_CYC  = 750,   // issue refresh every N cycles
+  parameter int REFRESH_CYC  = 450,   // issue refresh every N cycles
   parameter int INIT_REFRESH = 8      // noOfRefreshes in power-up
 ) (
   input  logic        clk,

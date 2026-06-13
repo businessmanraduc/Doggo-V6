@@ -17,7 +17,9 @@ a number of changes of its own along the way.
   a fetch boundary costs nothing extra
 - Parallel 16/32-bit decode: compressed instructions are decoded directly, not
   expanded on the critical path
-- Full forwarding; only a load immediately followed by a dependent use costs a stall
+- Operand-ready scoreboard in the regfile: a dependent instruction stalls in ID
+  until its producer commits (no forwarding network - a deliberate trade of IPC for
+  a shorter critical path / higher Fmax)
 - Gshare branch predictor - 8192-entry PHT plus a 512-entry BTB
 - Machine-mode CSRs, precise traps, and a CLINT for timer and software interrupts
 

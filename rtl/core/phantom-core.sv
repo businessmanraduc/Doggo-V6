@@ -186,6 +186,7 @@ module phantom_core (
 
     logic             ma_wb_regWrite;
     logic [1:0]       ma_wb_wbSel;
+    logic             ma_wb_valid;
 
   // ===========================================================================
   // PIPELINE REGISTER STORAGE
@@ -282,7 +283,7 @@ module phantom_core (
     logic             ma_targetMiss;
     logic             ma_predMiss;
 
-    // ── EX: forwarding & ALU ─────────────────────────────────────────────────
+    // ── EX: operands & ALU ───────────────────────────────────────────────────
     logic [31:0]      wb_fwdValue;      // WB writeback value (also regfile wr_data)
     logic [31:0]      fwd_rs1Value;     // EX operand A
     logic [31:0]      fwd_rs2Value;     // EX operand B
@@ -297,9 +298,7 @@ module phantom_core (
     logic [31:0]      ex_result;        // EX writeback value (ALU or muldiv)
 
     // ── EX: CSR read ─────────────────────────────────────────────────────────
-    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0]      csr_rdData;
-    /* verilator lint_on  UNUSEDSIGNAL */
     logic             ex_csrLegal;
 
     // ── MA: trap_unit outputs (synchronous exceptions only) ──────────────────
@@ -328,7 +327,6 @@ module phantom_core (
     logic [31:0]      csr_wrDataRS;
     logic [31:0]      csr_wrDataRC;
     logic [31:0]      csr_wrData;
-    logic [31:0]      csr_rdDataRaw;
     logic             csr_wrEnable;
 
     // ── MA: DMEM ─────────────────────────────────────────────────────────────
@@ -354,7 +352,7 @@ module phantom_core (
       .next_pc       (next_pc),
       .btb_rdata     (btb_rdata),
       .btb_valid     (btb_valid),
-      .update_en     ((ex_ma_isBranch && ex_ma_branchTaken) || ex_ma_isJump),
+      .update_en     (((ex_ma_isBranch && ex_ma_branchTaken) || ex_ma_isJump) && ma_wb_valid),
       .update_idx    (ma_wb_pc[BTB_IDX_W:1]),
       .update_target (ex_ma_targetAddr)
     );
@@ -494,7 +492,7 @@ module phantom_core (
 
     assign flush_if_id = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
-      if (!ex_busy && !mem_stall) begin
+      if ((!ex_busy && !mem_stall) || flush_if_id) begin
         if (!resetn || flush_if_id) begin             // squash -> insert bubble
           if_id_pc        <= 32'd0;
           if_id_pc2       <= 32'd0;
@@ -608,7 +606,7 @@ module phantom_core (
 
     assign flush_id_ex = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
-      if (!ex_busy && !mem_stall) begin
+      if ((!ex_busy && !mem_stall) || flush_id_ex) begin
       id_ex_pc          <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc;
       id_ex_pc2         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc2;
       id_ex_pc4         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc4;
@@ -660,10 +658,10 @@ module phantom_core (
 
 
   // ===========================================================================
-  // EX STAGE  ──  Forwarding, ALU, branch evaluation, Level 1 branch resolution
+  // EX STAGE  ──  ALU, branch evaluation, Level 1 branch resolution
   // ===========================================================================
 
-    // ── three-way forwarding muxes ───────────────────────────────────────────
+    // ── EX operands ──────────────────────────────────────────────────────────
     assign ex_linkAddr = id_ex_isComp ? id_ex_pc2 : id_ex_pc4;
 
     assign fwd_rs1Value = id_ex_rs1Data;
@@ -690,6 +688,7 @@ module phantom_core (
       .resetn   (resetn),
       .valid_in (muldiv_active),
       .consume  (!mem_stall),
+      .flush    (flush_id_ex),
       .opcode   (id_ex_instr[14:12]),
       .a        (fwd_rs1Value),
       .b        (fwd_rs2Value),
@@ -737,7 +736,6 @@ module phantom_core (
       .resetn      (resetn),
       .rd_addr     (ex_ma_csrIndex),
       .rd_data     (csr_rdData),
-      .rd_data_raw (csr_rdDataRaw),
       .wr_addr     (ex_ma_csrIndex),
       .wr_data     (csr_wrData),
       .wr_en       (csr_wrEnable),
@@ -875,8 +873,8 @@ module phantom_core (
     // ── CSR Read-Modify-Write ────────────────────────────────────────────────
     assign csr_zimm     = {27'd0, ex_ma_instr[19:15]};
     assign csr_rs1Value = ex_ma_csrUseImm ? csr_zimm : ex_ma_rs1Fwd;
-    assign csr_wrDataRS = csr_rdDataRaw |  csr_rs1Value;
-    assign csr_wrDataRC = csr_rdDataRaw & ~csr_rs1Value;
+    assign csr_wrDataRS = csr_rdData |  csr_rs1Value;
+    assign csr_wrDataRC = csr_rdData & ~csr_rs1Value;
     always_comb begin
       case (ex_ma_csrOp)
         `CSR_OP_RW: csr_wrData = csr_rs1Value;
@@ -950,10 +948,11 @@ module phantom_core (
       ma_wb_rdIndex   <= (!resetn || mem_stall) ? 5'd0   : ex_ma_rdIndex;
       ma_wb_aluResult <= (!resetn || mem_stall) ? 32'd0  : ex_ma_aluResult;
       ma_wb_loadData  <= (!resetn || mem_stall) ? 32'd0  : load_data;
-      ma_wb_csrData   <= (!resetn || mem_stall) ? 32'd0  : csr_rdDataRaw;
+      ma_wb_csrData   <= (!resetn || mem_stall) ? 32'd0  : csr_rdData;
       ma_wb_linkAddr  <= (!resetn || mem_stall) ? 32'd0  : ex_ma_linkAddr;
       ma_wb_regWrite  <= (!resetn || mem_stall) ? 1'b0   : ex_ma_regWrite && !trap_en;
       ma_wb_wbSel     <= (!resetn || mem_stall) ? 2'b00  : ex_ma_wbSel;
+      ma_wb_valid     <= (!resetn || mem_stall) ? 1'b0   : ex_ma_valid;
     end
 
   // ===========================================================================
@@ -966,7 +965,6 @@ module phantom_core (
   // ===========================================================================
   // wb_fwdValue simultaneously drives:
   //   • regfile.wr_data  - commits result to the architectural register file
-  //   • fwd_rs1/rs2Value via the 2'b01 forwarding path in EX
   // ===========================================================================
 
     always_comb begin

@@ -86,6 +86,7 @@ module cpu (
     logic [31:0] dmem_wdata;    // Write data    (store_data,        combinational MA)
     logic [31:0] dmem_rdata;    // Read data     (valid in MA,       1 cycle after rd_addr)
     logic [31:0] bsram_rdata;   // Raw SDPB read data (4 byte lanes combined)
+    logic [31:0] bsram_bypassed;// bsram_rdata after the store->load bypass merge
     logic [3:0]  dmem_be;       // Byte enables  (store_be,          combinational MA)
     logic        dmem_we;       // Write enable  (gated by !trap_en, combinational MA)
     logic        dmem_req;      // MA load/store strobe
@@ -114,7 +115,7 @@ module cpu (
     // ── Read data mux: SDRAM, peripheral, or BSRAM ───────────────────────────
     assign dmem_rdata = addr_is_periph ? periph_rdata
                       : addr_is_sdram  ? mem_rdata
-                      :                  bsram_rdata;
+                      :                  bsram_bypassed;
 
   // ===========================================================================
   // INTERNAL MEMORY BUS SIGNALS
@@ -194,10 +195,6 @@ module cpu (
   //
   // Read port (Port B): address = dmem_rd_addr (ex_dmem_addr, EX combinational)
   //   Registered at EX→MA clock edge. bsram_rdata valid from start of MA.
-  //
-  // Known limitation: a store immediately followed by a load to the same
-  // address reads the pre-write value (read-before-write). Insert at least
-  // one instruction between a store and a dependent load to the same address.
   // ===========================================================================
     (* ram_style = "block" *) logic [31:0] dmem_mem [0:1023];
 
@@ -212,6 +209,30 @@ module cpu (
 
     always_ff @(posedge clk) begin
       bsram_rdata <= dmem_mem[dmem_rd_addr[11:2]];
+    end
+ 
+    // ── Store->load bypass ───────────────────────────────────────────────────
+    logic        wbp_en;       // a BRAM store committed last cycle
+    logic [9:0]  wbp_word;     // its word index
+    logic [9:0]  rd_word_q;    // the load's read word index (aligned to bsram_rdata)
+    logic [31:0] wbp_data;
+    logic [3:0]  wbp_be;
+    always_ff @(posedge clk) begin
+      wbp_en    <= dmem_we && !addr_is_periph && !addr_is_sdram;
+      wbp_word  <= dmem_wr_addr[11:2];
+      wbp_data  <= dmem_wdata;
+      wbp_be    <= dmem_be;
+      rd_word_q <= dmem_rd_addr[11:2];
+    end
+
+    always_comb begin
+      bsram_bypassed = bsram_rdata;
+      if (wbp_en && (wbp_word == rd_word_q)) begin
+        if (wbp_be[0]) bsram_bypassed[7:0]   = wbp_data[7:0];
+        if (wbp_be[1]) bsram_bypassed[15:8]  = wbp_data[15:8];
+        if (wbp_be[2]) bsram_bypassed[23:16] = wbp_data[23:16];
+        if (wbp_be[3]) bsram_bypassed[31:24] = wbp_data[31:24];
+      end
     end
   // ===========================================================================
   // DMEM

@@ -140,10 +140,12 @@ module control_unit (
               reg_write = 1'b1;
               case (instrWord[11:10])
                 2'b00:       begin      // rd' >>= shamt (logical)
-                  alu_op = `ALU_SRL; alu_src_b = 1'b1;
+                  if (instrWord[12]) begin is_illegal = 1'b1;     reg_write = 1'b0; end
+                  else               begin alu_op     = `ALU_SRL; alu_src_b = 1'b1; end
                 end
                 2'b01:       begin      // rd' >>= shamt (arithmetic)
-                  alu_op = `ALU_SRA; alu_src_b = 1'b1;
+                  if (instrWord[12]) begin is_illegal = 1'b1;     reg_write = 1'b0; end
+                  else               begin alu_op     = `ALU_SRA; alu_src_b = 1'b1; end
                 end
                 2'b10:       begin      // rd' &=  imm6
                   alu_op = `ALU_AND; alu_src_b = 1'b1;
@@ -180,16 +182,25 @@ module control_unit (
         `CQ2: begin
           case (cfunc3)
             `CF3_C_SLLI:      begin     // rd = rd << shamt
-              alu_op    = `ALU_SLL; alu_src_b = 1'b1; reg_write = 1'b1;
+              if (instrWord[12]) is_illegal = 1'b1;
+              else begin
+                alu_op    = `ALU_SLL; alu_src_b = 1'b1; reg_write = 1'b1;
+              end
             end
             `CF3_C_LWSP:      begin     // rd = mem32[sp + uimm6]
-              alu_op    = `ALU_ADD; alu_src_b = 1'b1; reg_write = 1'b1;
-              mem_width = `WIDTH_W; mem_read  = 1'b1; wb_sel    = 2'b01;
+              if (instrWord[11:7] == 5'd0) is_illegal = 1'b1;
+              else begin
+                alu_op    = `ALU_ADD; alu_src_b = 1'b1; reg_write = 1'b1;
+                mem_width = `WIDTH_W; mem_read  = 1'b1; wb_sel    = 2'b01;
+              end
             end
             `CF3_C_MISC:      begin
               if (instrWord[12] == 1'b0) begin
                 if (instrWord[6:2] == 5'd0) begin // C.JR PC = rs1
-                  is_jump = 1'b1;     is_jalr   = 1'b1;
+                  if (instrWord[11:7] == 5'd0) is_illegal = 1'b1;
+                  else begin
+                    is_jump = 1'b1;   is_jalr   = 1'b1;
+                  end
                 end else begin                    // C.MV rd = rs2
                   alu_op  = `ALU_ADD; alu_src_b = 1'b0; reg_write = 1'b1;
                 end
@@ -276,8 +287,20 @@ module control_unit (
                 `F3_XORI:  alu_op = `ALU_XOR;
                 `F3_ORI:   alu_op = `ALU_OR;
                 `F3_ANDI:  alu_op = `ALU_AND;
-                `F3_SLLI:  alu_op = `ALU_SLL;
-                `F3_SRLI:  alu_op = func7b5 ? `ALU_SRA : `ALU_SRL;
+                `F3_SLLI:  begin
+                  if (instrWord[31:25] != 7'b0000000) begin
+                    reg_write = 1'b0; is_illegal = 1'b1;
+                  end else begin
+                    alu_op = `ALU_SLL;
+                  end
+                end
+                `F3_SRLI:  begin
+                  if      (instrWord[31:25] == 7'b0000000) alu_op = `ALU_SRL;
+                  else if (instrWord[31:25] == 7'b0100000) alu_op = `ALU_SRA;
+                  else begin
+                    reg_write = 1'b0; is_illegal = 1'b1;
+                  end
+                end
                 default:   begin
                   reg_write = 1'b0; is_illegal = 1'b1;
                 end
@@ -286,7 +309,8 @@ module control_unit (
             `OP_ARITH_R: begin
               if (instrWord[31:25] == 7'b0000001) begin
                 is_muldiv = 1'b1; reg_write = 1'b1;
-              end else if (instrWord[31:25] == `F7_NORMAL || instrWord[31:25] == `F7_ALT) begin
+              end else if (instrWord[31:25] == `F7_NORMAL || (instrWord[31:25] == `F7_ALT &&
+                          (func3 == `F3_ADD || func3 == `F3_SLL))) begin
                 alu_src_b = 1'b0; reg_write = 1'b1;
                 case (func3)
                   `F3_ADD:   alu_op = func7b5 ? `ALU_SUB : `ALU_ADD;
@@ -327,6 +351,7 @@ module control_unit (
             `OP_FENCE:   begin
               // FENCE and FENCE.I both treated as NOPs; No ordering guarantees
               // needed in a single-hart in-order pipeline with no I-Cache
+              if (func3 != 3'b000 && func3 != 3'b001) is_illegal = 1'b1;
             end
             default: is_illegal = 1'b1;
           endcase

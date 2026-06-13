@@ -51,6 +51,10 @@ module pht #(
 
   (* ram_style = "block" *) logic [1:0] mem [0:PHT_DEPTH-1];
 
+  initial begin
+    for (int i = 0; i < PHT_DEPTH; i++) mem[i] = 2'b00;
+  end
+
   // ── Read ───────────────────────────────────────────────────────────────────
   always_ff @(posedge clk) begin
     pht_mar <= r_bhr ^ pre_pc[PHT_IDX_W:1];

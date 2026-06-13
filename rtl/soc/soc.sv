@@ -34,9 +34,9 @@ module soc (
 );
  
   // ===========================================================================
-  // EHXPLLL  ──  25 MHz → 50 MHz
+  // EHXPLLL  ──  25 MHz → 60 MHz
   // ===========================================================================
-  // Target: 50 MHz cpu_clk from 25 MHz board crystal.
+  // Target: 60 MHz cpu_clk from 25 MHz board crystal.
   // ===========================================================================
     logic cpu_clk;
     logic pll_lock;
@@ -261,10 +261,14 @@ module soc (
       .msip    (clint_msip)
     );
 
+    logic uart_status_sel;
+    assign uart_status_sel = (periph_addr == `SOC_UART_STATUS_ADDR);
+
     // ── Peripheral read data mux ─────────────────────────────────────────────
     always_comb begin
-      if (clint_sel) periph_rdata = clint_rdata;
-      else           periph_rdata = 32'h00000000;
+      if (clint_sel)            periph_rdata = clint_rdata;
+      else if (uart_status_sel) periph_rdata = {31'b0, uart_tx_busy};
+      else                      periph_rdata = 32'h00000000;
     end
 
   // ===========================================================================
@@ -278,9 +282,7 @@ module soc (
   // CLKS_PER_BIT = round(cpu_clk / 115200).
   // At 50.0 MHz: 50_000_000 / 115_200 ≈ 434.
   // ===========================================================================
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic uart_tx_busy;   // reserved: future UART driver / flow control
-    /* verilator lint_on  UNUSEDSIGNAL */
+    logic uart_tx_busy;
 
     uart_tx #(
       .CLKS_PER_BIT (`SOC_UART_CLKS_PER_BIT)

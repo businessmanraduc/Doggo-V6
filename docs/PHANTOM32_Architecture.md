@@ -2,6 +2,12 @@
 ## Architecture Reference Document
 ### Version 1.2 - Phase III In Progress
 
+> **Staleness note:** the hazard strategy changed during Phase III from a full
+> forwarding network to an operand-ready **scoreboard** in the regfile (forwarding
+> traded away for a shorter critical path / higher Fmax). Sections that still
+> describe `forwarding-unit.sv`, `hazard-unit.sv`, or MA->EX / WB->EX forwarding
+> are pre-refactor and pending a rewrite; those two modules no longer exist.
+
 ---
 
 ## Table of Contents
@@ -42,8 +48,8 @@ and a cache hierarchy in later phases.
 | Pipeline | 6-stage in-order: PreIF → IF → ID → EX → MA → WB |
 | Fetch unit | Dual-port 16-bit-wide EBR, dual-PC fetch (after RVCoreP-32IC) |
 | Decoder | Parallel 16-bit and 32-bit decode - no decompressor on critical path |
-| Forwarding | Full: MA→EX and WB→EX paths, zero stalls for back-to-back ALU |
-| Load-use hazard | 1 stall cycle |
+| Hazard handling | Operand-ready scoreboard in the regfile (NO forwarding network); a dependent instruction stalls in ID until its producer commits |
+| Dependent-use cost | ~2 bubbles for any RAW pair (ALU->ALU and load-use alike) - IPC traded for higher Fmax |
 | Control hazards | Gshare predictor: 0 cycles on hit; misprediction flush 1 cycle (resolved in ID) or 2 cycles (resolved in EX) |
 | Traps | M-mode only: ECALL, EBREAK, illegal instruction, misaligned address, MRET |
 | CSR | mstatus, mie, mip, mtvec, mepc, mcause, mtval, mscratch, misa, mvendorid, marchid, mimpid, mhartid |

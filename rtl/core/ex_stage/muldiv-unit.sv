@@ -29,6 +29,7 @@ module muldiv_unit (
 
   input  logic        valid_in, // 1 = M-instruction inside EX
   input  logic        consume,  // 1 = EX releases the result to MA this cycle
+  input  logic        flush,    // 1 = EX instruction squashed -> abort
   input  logic [2:0]  opcode,   // func3 selector
   input  logic [31:0] a,        // rs1 value (post-forwarding)
   input  logic [31:0] b,        // rs2 value (post-forwarding)
@@ -102,8 +103,8 @@ module muldiv_unit (
     logic [31:0] in_mag_b;      assign in_mag_b  = in_sign_b ? (~b + 32'd1) : b;
     logic        in_b_zero;     assign in_b_zero = (b == 32'd0);
     logic        in_a_intmin;   assign in_a_intmin = (a == 32'h8000_0000);
-    logic        in_b_intmin;   assign in_b_intmin = (b == 32'hFFFF_FFFF);
-    logic        in_overflow;   assign in_overflow = in_div_signed & in_a_intmin & in_b_intmin;
+    logic        in_b_neg1;     assign in_b_neg1   = (b == 32'hFFFF_FFFF);
+    logic        in_overflow;   assign in_overflow = in_div_signed & in_a_intmin & in_b_neg1;
 
     logic [31:0] in_special_res;
     assign in_special_res = in_b_zero
@@ -131,6 +132,8 @@ module muldiv_unit (
 
     always_ff @(posedge clk)begin
       if (!resetn) begin
+        state <= S_IDLE;
+      end else if (flush) begin
         state <= S_IDLE;
       end else begin
         case (state)
