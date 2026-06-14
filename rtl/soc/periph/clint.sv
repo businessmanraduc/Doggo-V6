@@ -40,6 +40,7 @@ module clint #(
   logic [63:0]        r_mtime;
   logic [63:0]        r_mtimecmp;
   logic               r_msip;
+  logic               r_mtip;
 
   // ── mtime: free-running counter at TICK_HZ, read-only to software ────────────
   always_ff @(posedge clk) begin
@@ -85,7 +86,11 @@ module clint #(
   end
 
   // ── Interrupt outputs ─────────────────────────────────────────────────────────
-  assign mtip = (r_mtime >= r_mtimecmp); 
+  always_ff @(posedge clk) begin
+    if (!resetn) r_mtip <= 1'b0;
+    else         r_mtip <= (r_mtime >= r_mtimecmp);
+  end
+  assign mtip = r_mtip;
   assign msip = r_msip;
 
 endmodule

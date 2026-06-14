@@ -96,6 +96,9 @@ module soc (
   // ===========================================================================
  
 
+  (* keep *) logic sdram_resetn;
+  always_ff @(posedge cpu_clk) sdram_resetn <= cpu_resetn;
+
   // ===========================================================================
   // RESET SEQUENCER
   // ===========================================================================
@@ -192,7 +195,7 @@ module soc (
     assign dq_in   = sdram_d;
 
     sdram_adapter u_adapter (
-      .clk(cpu_clk), .resetn(cpu_resetn),
+      .clk(cpu_clk), .resetn(sdram_resetn),
       .cpu_addr(mem_addr), .cpu_req(mem_req), .cpu_we(mem_we),
       .cpu_wdata(mem_wdata), .cpu_be(mem_be),
       .cpu_rdata(mem_rdata), .cpu_ready(mem_ready),
@@ -207,7 +210,7 @@ module soc (
       .CAS_LATENCY (2),
       .REFRESH_CYC (420)
     ) u_sdram (
-      .clk(cpu_clk), .resetn(cpu_resetn),
+      .clk(cpu_clk), .resetn(sdram_resetn),
       .u_addr(u_addr), .u_we(u_we), .u_req(u_req), .u_ready(u_ready),
       .u_rdata(u_rdata), .u_rvalid(u_rvalid),
       .u_wbeat(u_wbeat), .u_wstrobe(u_wstrobe), .u_wdata(u_wdata), .u_wdqm(u_wdqm),
