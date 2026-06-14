@@ -66,6 +66,10 @@ module phantom_core (
     logic [31:0]      r_predpc2;        // BTB predicted target for r_pc2
     logic             r_predvalid;      // BTB valid bit for r_predpc entry
 
+    logic             r_doPredict;      // registered "predict taken"
+    logic [31:0]      r_predictTarget;  // registered target  (= r_predpc)
+    logic [31:0]      r_predictTarget2; // registered target2 (= r_predpc2)
+
     // ── IF/ID ────────────────────────────────────────────────────────────────
     logic [31:0]      if_id_pc;         // PC value for IF's instruction
     logic [31:0]      if_id_pc2;
@@ -363,7 +367,7 @@ module phantom_core (
     always_ff @(posedge clk) begin
       if (!resetn || branch_miss) begin
         r_bhr <= '0;
-      end else if (!stall && !ex_busy && !mem_stall) begin
+      end else if (!stall && !ex_busy && !mem_stall && !r_doPredict) begin
         r_bhr <= {r_bhr[BHR_W-2:0], pred_taken};
       end
     end
@@ -419,6 +423,21 @@ module phantom_core (
       end
     end
 
+    // ── Delayed Prediction register ──────────────────────────────────────────
+    always_ff @(posedge clk) begin
+      if (!resetn || branch_miss || trap_en || mret_en) begin
+        r_doPredict <= 1'b0;
+      end else if (!stall && !ex_busy && !mem_stall) begin
+        if (r_doPredict) begin
+          r_doPredict      <= 1'b0;
+        end else begin
+          r_doPredict      <= pred_taken;
+          r_predictTarget  <= r_predpc;
+          r_predictTarget2 <= r_predpc2;
+        end
+      end
+    end
+
   // ===========================================================================
   // PreIF/IF PIPELINE REGISTER
   // ===========================================================================
@@ -433,7 +452,7 @@ module phantom_core (
   //   2: mret_en          → csr_mepc               (return from trap)
   //   3: branch_miss      → truepc                 (EX-stage misprediction)
   //   4: stall            → r_pc                   (load-use stall, hold PC)
-  //   5: pred_taken       → r_predpc               (follow branch prediction)
+  //   5: r_doPredict      → r_predpc               (follow branch prediction)
   //   6: default          → pc_inc_seq (+2 or +4)  (sequential advance)
   // ===========================================================================
 
@@ -452,15 +471,15 @@ module phantom_core (
       next_pc2 = pc_inc_seq2;
 
       priority case (1'b1)
-        (!resetn):        begin next_pc = `RESET_VECTOR; next_pc2 = `RESET_VECTOR + 32'd2; end
-        (trap_en):        begin next_pc = csr_mtvec;     next_pc2 = csr_mtvec2;            end
-        (mret_en):        begin next_pc = csr_mepc;      next_pc2 = csr_mepc2;             end
-        (branch_miss):    begin next_pc = truepc;        next_pc2 = truepc2;               end
-        (mem_stall):      begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
-        (stall):          begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
-        (ex_busy):        begin next_pc = r_pc;          next_pc2 = r_pc2;                 end
-        (pred_taken):     begin next_pc = r_predpc;      next_pc2 = r_predpc2;             end
-        default:          begin next_pc = pc_inc_seq;    next_pc2 = pc_inc_seq2;           end
+        (!resetn):        begin next_pc = `RESET_VECTOR;   next_pc2 = `RESET_VECTOR + 32'd2; end
+        (trap_en):        begin next_pc = csr_mtvec;       next_pc2 = csr_mtvec2;            end
+        (mret_en):        begin next_pc = csr_mepc;        next_pc2 = csr_mepc2;             end
+        (branch_miss):    begin next_pc = truepc;          next_pc2 = truepc2;               end
+        (mem_stall):      begin next_pc = r_pc;            next_pc2 = r_pc2;                 end
+        (stall):          begin next_pc = r_pc;            next_pc2 = r_pc2;                 end
+        (ex_busy):        begin next_pc = r_pc;            next_pc2 = r_pc2;                 end
+        (r_doPredict):    begin next_pc = r_predictTarget; next_pc2 = r_predictTarget2;      end
+        default:          begin next_pc = pc_inc_seq;      next_pc2 = pc_inc_seq2;           end
       endcase
     end
 
@@ -490,7 +509,8 @@ module phantom_core (
   // IF/ID PIPELINE REGISTER
   // ===========================================================================
 
-    assign flush_if_id = branch_miss || trap_en || mret_en;
+    assign flush_if_id = branch_miss || trap_en || mret_en
+                      || (r_doPredict && !stall && !ex_busy && !mem_stall);
     always_ff @(posedge clk) begin
       if ((!ex_busy && !mem_stall) || flush_if_id) begin
         if (!resetn || flush_if_id) begin             // squash -> insert bubble

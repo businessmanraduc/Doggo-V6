@@ -21,6 +21,10 @@ module tb_core (
     $readmemh("program.hex", mem);
   end
 
+  // cycle counter (for IPC measurement; harmless extra $display at $finish)
+  logic [31:0] cycle_count;
+  always_ff @(posedge clk) cycle_count <= resetn ? cycle_count + 1 : 32'd0;
+
   phantom_core dut (
     .clk     (clk),
     .resetn  (resetn),
@@ -66,6 +70,7 @@ module tb_core (
 
       if (dmem_waddr_aligned == 32'h80001000) begin
         $display("Simulation Finished. Result: %h", dmem_wdata);
+        $display("Cycles: %0d", cycle_count);
         $finish;
       end
     end
