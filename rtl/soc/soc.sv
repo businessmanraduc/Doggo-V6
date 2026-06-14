@@ -109,19 +109,22 @@ module soc (
   // ===========================================================================
     localparam logic [26:0] RESET_HOLD = 27'd120_000_000;
     logic [26:0] rst_cnt;
-    logic cpu_resetn;
+    logic        resetn_seq;
+    logic        cpu_resetn;
 
     always_ff @(posedge cpu_clk) begin
       if (!pll_lock || !resetn) begin
         rst_cnt      <= 27'd0;
-        cpu_resetn   <= 1'b0;
-      end else if (!cpu_resetn) begin
+        resetn_seq   <= 1'b0;
+      end else if (!resetn_seq) begin
         if (rst_cnt == RESET_HOLD)
-          cpu_resetn <= 1'b1;
+          resetn_seq <= 1'b1;
         else
           rst_cnt    <= rst_cnt + 27'd1;
       end
     end
+
+    DCCA u_resetn_gbuf (.CLKI(resetn_seq), .CLKO(cpu_resetn), .CE(1'b1));
   // ===========================================================================
   // RESET SEQUENCER
   // ===========================================================================
