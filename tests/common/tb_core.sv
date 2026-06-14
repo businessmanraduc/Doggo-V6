@@ -1,6 +1,8 @@
 `include "isa.vh"
 
-module tb_core (
+module tb_core #(
+  parameter int IMEM_WAIT = 0 // 0 = BRAM-like always-ready; >0 = inject N fetch-stall cycles
+) (
   input logic clk,
   input logic resetn
 );
@@ -32,6 +34,7 @@ module tb_core (
     .imem_addr_b (imem_addr_b),
     .imem_data_a (imem_data_a),
     .imem_data_b (imem_data_b),
+    .imem_ready  (imem_ready),
     .dmem_raddr  (dmem_raddr),
     .dmem_waddr  (dmem_waddr),
     .dmem_wdata  (dmem_wdata),
@@ -49,6 +52,25 @@ module tb_core (
     imem_data_a <= {mem[imem_addr_a + 1], mem[imem_addr_a]};
     imem_data_b <= {mem[imem_addr_b + 1], mem[imem_addr_b]};
   end
+
+  // ── Fetch-ready model ──────────────────────────────────────────────────────
+  logic       imem_ready;
+  logic [7:0] wctr;
+  logic       ready_pulse;
+  always_ff @(posedge clk) begin
+    if (!resetn) begin
+      wctr        <= IMEM_WAIT[7:0];
+      ready_pulse <= 1'b0;
+    end else if (ready_pulse) begin
+      ready_pulse <= 1'b0;
+      wctr        <= IMEM_WAIT[7:0];
+    end else if (wctr == 8'd0) begin
+      ready_pulse <= 1'b1;
+    end else begin
+      wctr        <= wctr - 8'd1;
+    end
+  end
+  assign imem_ready = (IMEM_WAIT == 0) ? 1'b1 : ready_pulse;
 
   logic [31:0] dmem_raddr_aligned;
   always_ff @(posedge clk) begin

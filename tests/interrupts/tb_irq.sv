@@ -66,6 +66,7 @@ module tb_irq (
     .imem_addr_b (imem_addr_b),
     .imem_data_a (imem_data_a),
     .imem_data_b (imem_data_b),
+    .imem_ready  (1'b1),
     .dmem_raddr  (dmem_raddr),
     .dmem_waddr  (dmem_waddr),
     .dmem_wdata  (dmem_wdata),

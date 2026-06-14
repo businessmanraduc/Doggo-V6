@@ -74,6 +74,10 @@ module cpu (
     /* verilator lint_on  UNUSEDSIGNAL */
     logic [15:0] imem_data_a;   // Port A read data (valid 1 cycle after address)
     logic [15:0] imem_data_b;   // Port B read data
+    // Fetch-ready handshake to the core.
+    logic        imem_ready;
+    assign       imem_ready = 1'b1;
+
 
     // ── DMEM ───────────────────────────────────────────────────────────────────
     // dmem_rd_addr bits [31:12] and [1:0] are not forwarded to the BSRAM address
@@ -133,6 +137,7 @@ module cpu (
       .imem_addr_b  (imem_addr_b),
       .imem_data_a  (imem_data_a),
       .imem_data_b  (imem_data_b),
+      .imem_ready   (imem_ready),
       // ── DMEM ───────────────────────────────────────────────────────────────
       .dmem_raddr   (dmem_rd_addr),
       .dmem_waddr   (dmem_wr_addr),
