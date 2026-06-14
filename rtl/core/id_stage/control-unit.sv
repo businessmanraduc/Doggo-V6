@@ -310,7 +310,7 @@ module control_unit (
               if (instrWord[31:25] == 7'b0000001) begin
                 is_muldiv = 1'b1; reg_write = 1'b1;
               end else if (instrWord[31:25] == `F7_NORMAL || (instrWord[31:25] == `F7_ALT &&
-                          (func3 == `F3_ADD || func3 == `F3_SLL))) begin
+                          (func3 == `F3_ADD || func3 == `F3_SRL))) begin
                 alu_src_b = 1'b0; reg_write = 1'b1;
                 case (func3)
                   `F3_ADD:   alu_op = func7b5 ? `ALU_SUB : `ALU_ADD;

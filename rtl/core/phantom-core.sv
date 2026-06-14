@@ -607,48 +607,48 @@ module phantom_core (
     assign flush_id_ex = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
       if ((!ex_busy && !mem_stall) || flush_id_ex) begin
-      id_ex_pc          <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc;
-      id_ex_pc2         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc2;
-      id_ex_pc4         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc4;
-      id_ex_pc6         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_pc6;
+      id_ex_pc          <= (flush_id_ex || stall) ? 32'd0      : if_id_pc;
+      id_ex_pc2         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc2;
+      id_ex_pc4         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc4;
+      id_ex_pc6         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc6;
 
-      id_ex_predpc      <= (!resetn ||flush_id_ex || stall) ? 32'd0      : if_id_predpc;
-      id_ex_predTaken   <= (!resetn ||flush_id_ex || stall) ? 1'b0       : if_id_predTaken;
-      id_ex_phtIdx      <= (!resetn ||flush_id_ex || stall) ? '0         : if_id_phtIdx;
-      id_ex_phtOld      <= (!resetn ||flush_id_ex || stall) ? 2'b01      : if_id_phtOld;
+      id_ex_predpc      <= (flush_id_ex || stall) ? 32'd0      : if_id_predpc;
+      id_ex_predTaken   <= (flush_id_ex || stall) ? 1'b0       : if_id_predTaken;
+      id_ex_phtIdx      <= (flush_id_ex || stall) ? '0         : if_id_phtIdx;
+      id_ex_phtOld      <= (flush_id_ex || stall) ? 2'b01      : if_id_phtOld;
 
-      id_ex_instr       <= (!resetn ||flush_id_ex || stall) ? `NOP_INSTR : if_id_instr;
-      id_ex_isComp      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : if_id_isComp;
-      id_ex_imm         <= (!resetn ||flush_id_ex || stall) ? 32'd0      : id_imm;
-      id_ex_imm2        <= (!resetn ||flush_id_ex || stall) ? 32'd2      : (id_imm + 32'd2);
-      id_ex_isJump      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isJump;
-      id_ex_isJalr      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isJalr;
-      id_ex_isMulDiv    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isMulDiv;
-      id_ex_isBranch    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isBranch;
-      id_ex_branchType  <= (!resetn ||flush_id_ex || stall) ? 3'b000     : id_branchType;
+      id_ex_instr       <= (flush_id_ex || stall) ? `NOP_INSTR : if_id_instr;
+      id_ex_isComp      <= (flush_id_ex || stall) ? 1'b0       : if_id_isComp;
+      id_ex_imm         <= (flush_id_ex || stall) ? 32'd0      : id_imm;
+      id_ex_imm2        <= (flush_id_ex || stall) ? 32'd2      : (id_imm + 32'd2);
+      id_ex_isJump      <= (flush_id_ex || stall) ? 1'b0       : id_isJump;
+      id_ex_isJalr      <= (flush_id_ex || stall) ? 1'b0       : id_isJalr;
+      id_ex_isMulDiv    <= (flush_id_ex || stall) ? 1'b0       : id_isMulDiv;
+      id_ex_isBranch    <= (flush_id_ex || stall) ? 1'b0       : id_isBranch;
+      id_ex_branchType  <= (flush_id_ex || stall) ? 3'b000     : id_branchType;
 
-      id_ex_rs1Index    <= (!resetn ||flush_id_ex || stall) ? 5'd0       : if_id_rs1Index;
-      id_ex_rs2Index    <= (!resetn ||flush_id_ex || stall) ? 5'd0       : if_id_rs2Index;
-      id_ex_rdIndex     <= (!resetn ||flush_id_ex || stall) ? 5'd0       : if_id_rdIndex;
-      id_ex_rs1Data     <= (!resetn ||flush_id_ex || stall) ? 32'd0      : (id_aluLHS ? if_id_pc  : rf_rs1Data);
-      id_ex_rs2Data     <= (!resetn ||flush_id_ex || stall) ? 32'd0      : (id_aluRHS ? id_imm : rf_rs2Data);
-      id_ex_aluOp       <= (!resetn ||flush_id_ex || stall) ? `ALU_ADD   : id_aluOp;
+      id_ex_rs1Index    <= (flush_id_ex || stall) ? 5'd0       : if_id_rs1Index;
+      id_ex_rs2Index    <= (flush_id_ex || stall) ? 5'd0       : if_id_rs2Index;
+      id_ex_rdIndex     <= (flush_id_ex || stall) ? 5'd0       : if_id_rdIndex;
+      id_ex_rs1Data     <= (flush_id_ex || stall) ? 32'd0      : (id_aluLHS ? if_id_pc  : rf_rs1Data);
+      id_ex_rs2Data     <= (flush_id_ex || stall) ? 32'd0      : (id_aluRHS ? id_imm : rf_rs2Data);
+      id_ex_aluOp       <= (flush_id_ex || stall) ? `ALU_ADD   : id_aluOp;
 
-      id_ex_memRead     <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_memRead;
-      id_ex_memWrite    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_memWrite;
-      id_ex_memWidth    <= (!resetn ||flush_id_ex || stall) ? `WIDTH_W   : id_memWidth;
-      id_ex_regWrite    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_regWrite;
-      id_ex_wbSel       <= (!resetn ||flush_id_ex || stall) ? 2'b00      : id_wbSel;
+      id_ex_memRead     <= (flush_id_ex || stall) ? 1'b0       : id_memRead;
+      id_ex_memWrite    <= (flush_id_ex || stall) ? 1'b0       : id_memWrite;
+      id_ex_memWidth    <= (flush_id_ex || stall) ? `WIDTH_W   : id_memWidth;
+      id_ex_regWrite    <= (flush_id_ex || stall) ? 1'b0       : id_regWrite;
+      id_ex_wbSel       <= (flush_id_ex || stall) ? 2'b00      : id_wbSel;
 
-      id_ex_csrEnable   <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_csrEnable;
-      id_ex_csrOp       <= (!resetn ||flush_id_ex || stall) ? 2'b00      : id_csrOp;
-      id_ex_csrUseImm   <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_csrUseImm;
-      id_ex_csrIndex    <= (!resetn ||flush_id_ex || stall) ? 12'd0      : id_csrIndex;
-      id_ex_isECALL     <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isECALL;
-      id_ex_isEBREAK    <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isEBREAK;
-      id_ex_isMRET      <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isMRET;
-      id_ex_isIllegal   <= (!resetn ||flush_id_ex || stall) ? 1'b0       : id_isIllegal;
-      id_ex_valid       <= (!resetn ||flush_id_ex || stall) ? 1'b0       : if_id_valid;
+      id_ex_csrEnable   <= (flush_id_ex || stall) ? 1'b0       : id_csrEnable;
+      id_ex_csrOp       <= (flush_id_ex || stall) ? 2'b00      : id_csrOp;
+      id_ex_csrUseImm   <= (flush_id_ex || stall) ? 1'b0       : id_csrUseImm;
+      id_ex_csrIndex    <= (flush_id_ex || stall) ? 12'd0      : id_csrIndex;
+      id_ex_isECALL     <= (flush_id_ex || stall) ? 1'b0       : id_isECALL;
+      id_ex_isEBREAK    <= (flush_id_ex || stall) ? 1'b0       : id_isEBREAK;
+      id_ex_isMRET      <= (flush_id_ex || stall) ? 1'b0       : id_isMRET;
+      id_ex_isIllegal   <= (flush_id_ex || stall) ? 1'b0       : id_isIllegal;
+      id_ex_valid       <= (!resetn || flush_id_ex || stall)   ? 1'b0 : if_id_valid;
       end
     end
 
@@ -766,45 +766,45 @@ module phantom_core (
     assign flush_ex_ma = trap_en || mret_en || branch_miss || ex_busy;
     always_ff @(posedge clk) begin
       if (!mem_stall) begin
-      ex_ma_pc          <= (!resetn || flush_ex_ma) ? 32'd0      : id_ex_pc;
-      ex_ma_linkAddr    <= (!resetn || flush_ex_ma) ? 32'd0      : ex_linkAddr;
+      ex_ma_pc          <= (flush_ex_ma) ? 32'd0      : id_ex_pc;
+      ex_ma_linkAddr    <= (flush_ex_ma) ? 32'd0      : ex_linkAddr;
  
-      ex_ma_phtIdx      <= (!resetn || flush_ex_ma) ? '0         : id_ex_phtIdx;
-      ex_ma_phtOld      <= (!resetn || flush_ex_ma) ? 2'b01      : id_ex_phtOld;
-      ex_ma_belowAddr   <= (!resetn || flush_ex_ma) ? 32'd0      : ex_belowAddr;
-      ex_ma_belowAddr2  <= (!resetn || flush_ex_ma) ? 32'd2      : ex_belowAddr2;
-      ex_ma_targetAddr  <= (!resetn || flush_ex_ma) ? 32'd0      : ex_targetAddr;
-      ex_ma_targetAddr2 <= (!resetn || flush_ex_ma) ? 32'd0      : ex_targetAddr2;
-      ex_ma_branchTaken <= (!resetn || flush_ex_ma) ? 1'b0       : ex_branchTaken;
-      ex_ma_predpc      <= (!resetn || flush_ex_ma) ? 32'd0      : id_ex_predpc;
-      ex_ma_predTaken   <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_predTaken;
+      ex_ma_phtIdx      <= (flush_ex_ma) ? '0         : id_ex_phtIdx;
+      ex_ma_phtOld      <= (flush_ex_ma) ? 2'b01      : id_ex_phtOld;
+      ex_ma_belowAddr   <= (flush_ex_ma) ? 32'd0      : ex_belowAddr;
+      ex_ma_belowAddr2  <= (flush_ex_ma) ? 32'd2      : ex_belowAddr2;
+      ex_ma_targetAddr  <= (flush_ex_ma) ? 32'd0      : ex_targetAddr;
+      ex_ma_targetAddr2 <= (flush_ex_ma) ? 32'd0      : ex_targetAddr2;
+      ex_ma_branchTaken <= (flush_ex_ma) ? 1'b0       : ex_branchTaken;
+      ex_ma_predpc      <= (flush_ex_ma) ? 32'd0      : id_ex_predpc;
+      ex_ma_predTaken   <= (flush_ex_ma) ? 1'b0       : id_ex_predTaken;
 
-      ex_ma_instr       <= (!resetn || flush_ex_ma) ? `NOP_INSTR : id_ex_instr;
-      ex_ma_isJump      <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isJump;
-      ex_ma_isBranch    <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isBranch;
+      ex_ma_instr       <= (flush_ex_ma) ? `NOP_INSTR : id_ex_instr;
+      ex_ma_isJump      <= (flush_ex_ma) ? 1'b0       : id_ex_isJump;
+      ex_ma_isBranch    <= (flush_ex_ma) ? 1'b0       : id_ex_isBranch;
  
-      ex_ma_rdIndex     <= (!resetn || flush_ex_ma) ? 5'd0       : id_ex_rdIndex;
-      ex_ma_rs1Fwd      <= (!resetn || flush_ex_ma) ? 32'd0      : fwd_rs1Value;
-      ex_ma_rs2Fwd      <= (!resetn || flush_ex_ma) ? 32'd0      : fwd_rs2Value;
-      ex_ma_aluResult   <= (!resetn || flush_ex_ma) ? 32'd0      : ex_result;
-      ex_ma_dmemAddr    <= (!resetn || flush_ex_ma) ? 32'd0      : ex_dmem_addr;
+      ex_ma_rdIndex     <= (flush_ex_ma) ? 5'd0       : id_ex_rdIndex;
+      ex_ma_rs1Fwd      <= (flush_ex_ma) ? 32'd0      : fwd_rs1Value;
+      ex_ma_rs2Fwd      <= (flush_ex_ma) ? 32'd0      : fwd_rs2Value;
+      ex_ma_aluResult   <= (flush_ex_ma) ? 32'd0      : ex_result;
+      ex_ma_dmemAddr    <= (flush_ex_ma) ? 32'd0      : ex_dmem_addr;
  
-      ex_ma_memRead     <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_memRead;
-      ex_ma_memWrite    <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_memWrite;
-      ex_ma_memWidth    <= (!resetn || flush_ex_ma) ? `WIDTH_W   : id_ex_memWidth;
-      ex_ma_regWrite    <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_regWrite;
-      ex_ma_wbSel       <= (!resetn || flush_ex_ma) ? 2'b00      : id_ex_wbSel;
+      ex_ma_memRead     <= (flush_ex_ma) ? 1'b0       : id_ex_memRead;
+      ex_ma_memWrite    <= (flush_ex_ma) ? 1'b0       : id_ex_memWrite;
+      ex_ma_memWidth    <= (flush_ex_ma) ? `WIDTH_W   : id_ex_memWidth;
+      ex_ma_regWrite    <= (flush_ex_ma) ? 1'b0       : id_ex_regWrite;
+      ex_ma_wbSel       <= (flush_ex_ma) ? 2'b00      : id_ex_wbSel;
  
-      ex_ma_csrEnable   <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_csrEnable;
-      ex_ma_csrOp       <= (!resetn || flush_ex_ma) ? 2'b00      : id_ex_csrOp;
-      ex_ma_csrUseImm   <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_csrUseImm;
-      ex_ma_csrIndex    <= (!resetn || flush_ex_ma) ? 12'd0      : id_ex_csrIndex;
-      ex_ma_isECALL     <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isECALL;
-      ex_ma_isEBREAK    <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isEBREAK;
-      ex_ma_isMRET      <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isMRET;
-      ex_ma_isIllegal   <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_isIllegal;
-      ex_ma_csrLegal    <= (!resetn || flush_ex_ma) ? 1'b0       : ex_csrLegal;
-      ex_ma_valid       <= (!resetn || flush_ex_ma) ? 1'b0       : id_ex_valid;
+      ex_ma_csrEnable   <= (flush_ex_ma) ? 1'b0       : id_ex_csrEnable;
+      ex_ma_csrOp       <= (flush_ex_ma) ? 2'b00      : id_ex_csrOp;
+      ex_ma_csrUseImm   <= (flush_ex_ma) ? 1'b0       : id_ex_csrUseImm;
+      ex_ma_csrIndex    <= (flush_ex_ma) ? 12'd0      : id_ex_csrIndex;
+      ex_ma_isECALL     <= (flush_ex_ma) ? 1'b0       : id_ex_isECALL;
+      ex_ma_isEBREAK    <= (flush_ex_ma) ? 1'b0       : id_ex_isEBREAK;
+      ex_ma_isMRET      <= (flush_ex_ma) ? 1'b0       : id_ex_isMRET;
+      ex_ma_isIllegal   <= (flush_ex_ma) ? 1'b0       : id_ex_isIllegal;
+      ex_ma_csrLegal    <= (flush_ex_ma) ? 1'b0       : ex_csrLegal;
+      ex_ma_valid       <= (!resetn || flush_ex_ma)   ? 1'b0 : id_ex_valid;
       end
     end
 
@@ -944,14 +944,14 @@ module phantom_core (
   // ===========================================================================
 
     always_ff @(posedge clk) begin
-      ma_wb_pc        <= (!resetn || mem_stall) ? 32'd0  : ex_ma_pc;
-      ma_wb_rdIndex   <= (!resetn || mem_stall) ? 5'd0   : ex_ma_rdIndex;
-      ma_wb_aluResult <= (!resetn || mem_stall) ? 32'd0  : ex_ma_aluResult;
-      ma_wb_loadData  <= (!resetn || mem_stall) ? 32'd0  : load_data;
-      ma_wb_csrData   <= (!resetn || mem_stall) ? 32'd0  : csr_rdData;
-      ma_wb_linkAddr  <= (!resetn || mem_stall) ? 32'd0  : ex_ma_linkAddr;
+      ma_wb_pc        <= (mem_stall) ? 32'd0  : ex_ma_pc;
+      ma_wb_rdIndex   <= (mem_stall) ? 5'd0   : ex_ma_rdIndex;
+      ma_wb_aluResult <= (mem_stall) ? 32'd0  : ex_ma_aluResult;
+      ma_wb_loadData  <= (mem_stall) ? 32'd0  : load_data;
+      ma_wb_csrData   <= (mem_stall) ? 32'd0  : csr_rdData;
+      ma_wb_linkAddr  <= (mem_stall) ? 32'd0  : ex_ma_linkAddr;
       ma_wb_regWrite  <= (!resetn || mem_stall) ? 1'b0   : ex_ma_regWrite && !trap_en;
-      ma_wb_wbSel     <= (!resetn || mem_stall) ? 2'b00  : ex_ma_wbSel;
+      ma_wb_wbSel     <= (mem_stall) ? 2'b00  : ex_ma_wbSel;
       ma_wb_valid     <= (!resetn || mem_stall) ? 1'b0   : ex_ma_valid;
     end
 
