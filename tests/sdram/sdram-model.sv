@@ -9,7 +9,8 @@
 module sdram_model #(
   parameter int CAS_LATENCY = 2,
   parameter int BURST_LEN   = 8,
-  parameter int MODEL_AW    = 16
+  parameter int MODEL_AW    = 16,
+  parameter     INIT_FILE   = ""
 ) (
   input  logic        clk,
   input  logic        cke,
@@ -121,6 +122,7 @@ module sdram_model #(
     for (i = 0; i < RD_STAGES; i = i + 1) rd_vld[i] = 1'b0;
     wr_busy = 1'b0;
     rd_busy = 1'b0;
+    if (INIT_FILE != "") $readmemh(INIT_FILE, mem);
   end
 
 endmodule

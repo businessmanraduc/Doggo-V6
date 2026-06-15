@@ -54,6 +54,7 @@ SV_SOURCES = \
   $(SOC)/periph/clint.sv              \
   $(SOC)/mem/sdram-ctrl.sv            \
 	$(SOC)/mem/sdram-adapter.sv         \
+	$(SOC)/mem/icache.sv                \
 	$(SOC)/cpu.sv                       \
   $(SOC)/soc.sv
 

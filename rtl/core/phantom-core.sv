@@ -89,6 +89,7 @@ module phantom_core (
     logic [4:0]       if_id_rs2Index;   // extracted rs2 index
     logic [4:0]       if_id_rdIndex;    // extracted rd  index
     logic             if_id_valid;      // 1 => real instruction (not a bubble)
+    logic             if_id_fetchOK;    // 1 => this instruction's fetch hit
 
     // ── ID/EX ────────────────────────────────────────────────────────────────
     logic [31:0]      id_ex_pc;         // PC value for ID's instruction
@@ -204,7 +205,7 @@ module phantom_core (
   
     // ── Pipeline control ─────────────────────────────────────────────────────
     logic             stall;            // load-use stall
-    logic             imem_stall;       // fetch not ready (I-cache miss)
+    logic             imem_miss;        // ID-stage instruction came from missed fetch
     logic             mem_access;       // MA instr is a load/store
     logic             dmem_stall;        // MA memory access not yet complete
     logic             branch_miss;      // EX-stage misprediction
@@ -367,9 +368,9 @@ module phantom_core (
 
     // ── BHR: speculative join update, reset on any miss ──────────────────────
     always_ff @(posedge clk) begin
-      if (!resetn || branch_miss) begin
+      if (!resetn || branch_miss || imem_miss) begin
         r_bhr <= '0;
-      end else if (!stall && !ex_busy && !imem_stall && !dmem_stall && !r_doPredict) begin
+      end else if (!stall && !ex_busy && !dmem_stall && !r_doPredict) begin
         r_bhr <= {r_bhr[BHR_W-2:0], pred_taken};
       end
     end
@@ -414,11 +415,11 @@ module phantom_core (
 
     // ── Prediction registers: reset on any miss, trap or MRET ────────────────
     always_ff @(posedge clk) begin
-      if (!resetn || branch_miss || trap_en || mret_en) begin
+      if (!resetn || branch_miss || imem_miss || trap_en || mret_en) begin
         r_predpc    <= 32'd0;
         r_predpc2   <= 32'd2;
         r_predvalid <= 1'b0;
-      end else if (!stall && !ex_busy && !imem_stall && !dmem_stall) begin
+      end else if (!stall && !ex_busy && !dmem_stall) begin
         r_predpc    <= btb_rdata;
         r_predpc2   <= btb_rdata + 32'd2;
         r_predvalid <= btb_valid;
@@ -427,9 +428,9 @@ module phantom_core (
 
     // ── Delayed Prediction register ──────────────────────────────────────────
     always_ff @(posedge clk) begin
-      if (!resetn || branch_miss || trap_en || mret_en) begin
+      if (!resetn || branch_miss || imem_miss || trap_en || mret_en) begin
         r_doPredict <= 1'b0;
-      end else if (!stall && !ex_busy && !imem_stall && !dmem_stall) begin
+      end else if (!stall && !ex_busy && !dmem_stall) begin
         if (r_doPredict) begin
           r_doPredict      <= 1'b0;
         end else begin
@@ -460,7 +461,8 @@ module phantom_core (
 
     assign imem_addr_a = next_pc;
     assign imem_addr_b = next_pc2;
-    assign imem_stall  = resetn && !imem_ready;
+    assign imem_miss   = if_id_valid && !if_id_fetchOK && !branch_miss
+      && !trap_en && !mret_en && !dmem_stall && !ex_busy;
 
     // ── Pre-calculated NextPC targets ────────────────────────────────────────
     logic [31:0] pc_inc_seq;      assign pc_inc_seq      = if_isCompressed ? r_pc2 : r_pc4;
@@ -478,7 +480,7 @@ module phantom_core (
         (trap_en):        begin next_pc = csr_mtvec;       next_pc2 = csr_mtvec2;            end
         (mret_en):        begin next_pc = csr_mepc;        next_pc2 = csr_mepc2;             end
         (branch_miss):    begin next_pc = truepc;          next_pc2 = truepc2;               end
-        (imem_stall):     begin next_pc = r_pc;            next_pc2 = r_pc2;                 end
+        (imem_miss):      begin next_pc = if_id_pc;        next_pc2 = if_id_pc2;             end
         (dmem_stall):     begin next_pc = r_pc;            next_pc2 = r_pc2;                 end
         (stall):          begin next_pc = r_pc;            next_pc2 = r_pc2;                 end
         (ex_busy):        begin next_pc = r_pc;            next_pc2 = r_pc2;                 end
@@ -513,11 +515,11 @@ module phantom_core (
   // IF/ID PIPELINE REGISTER
   // ===========================================================================
 
-    assign flush_if_id = branch_miss || trap_en || mret_en
+    assign flush_if_id = branch_miss || imem_miss || trap_en || mret_en
                       || (r_doPredict && !stall && !ex_busy && !dmem_stall);
     always_ff @(posedge clk) begin
       if ((!ex_busy && !dmem_stall) || flush_if_id) begin
-        if (!resetn || flush_if_id || (imem_stall && !stall)) begin // squash -> insert bubble
+        if (!resetn || flush_if_id) begin   // squash -> insert bubble
           if_id_pc        <= 32'd0;
           if_id_pc2       <= 32'd0;
           if_id_pc4       <= 32'd0;
@@ -532,7 +534,8 @@ module phantom_core (
           if_id_rs2Index  <= 5'd0;
           if_id_rdIndex   <= 5'd0;
           if_id_valid     <= 1'b0;
-        end else if (!stall) begin                                  // advance (on stall: hold)
+          if_id_fetchOK   <= 1'b1;
+        end else if (!stall) begin          // advance (on stall: hold)
           if_id_pc        <= r_pc;
           if_id_pc2       <= r_pc2;
           if_id_pc4       <= r_pc4;
@@ -547,6 +550,7 @@ module phantom_core (
           if_id_rs2Index  <= fd_rs2Index;
           if_id_rdIndex   <= fd_rdIndex;
           if_id_valid     <= 1'b1;
+          if_id_fetchOK   <= imem_ready;
         end
       end
     end
@@ -628,7 +632,7 @@ module phantom_core (
   // ID/EX PIPELINE REGISTER
   // ===========================================================================
 
-    assign flush_id_ex = branch_miss || trap_en || mret_en;
+    assign flush_id_ex = branch_miss || imem_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
       if ((!ex_busy && !dmem_stall) || flush_id_ex) begin
       id_ex_pc          <= (flush_id_ex || stall) ? 32'd0      : if_id_pc;

@@ -75,11 +75,15 @@ module cpu (
     logic [15:0] imem_data_a;   // Port A read data (valid 1 cycle after address)
     logic [15:0] imem_data_b;   // Port B read data
     // Fetch-ready handshake to the core.
-    logic        imem_ready;
-    assign       imem_ready = 1'b1;
+    logic        imem_ready;    // driven by the I-Cache
 
+    // ── I-Cache SDRAM fill master ────────────────────────────────────────────
+    logic [31:0] fill_addr;
+    logic        fill_req;
+    logic [31:0] fill_rdata;
+    logic        fill_ready;
 
-    // ── DMEM ───────────────────────────────────────────────────────────────────
+    // ── DMEM ─────────────────────────────────────────────────────────────────
     // dmem_rd_addr bits [31:12] and [1:0] are not forwarded to the BSRAM address
     // ([11:2] only). Upper bits exceed the 4 KB DMEM window; bits [1:0] are
     // byte-offset bits that the word-addressed BSRAM ignores.
@@ -110,11 +114,7 @@ module cpu (
     assign periph_be    = dmem_be;
  
     // ── SDRAM bus outputs (to soc.sv's adapter) ──────────────────────────────
-    assign mem_addr     = dmem_wr_addr;
-    assign mem_req      = dmem_req && addr_is_sdram;
-    assign mem_we       = dmem_we;
-    assign mem_wdata    = dmem_wdata;
-    assign mem_be       = dmem_be;
+    logic  sdram_d_ready;
 
     // ── Read data mux: SDRAM, peripheral, or BSRAM ───────────────────────────
     assign dmem_rdata = addr_is_periph ? periph_rdata
@@ -146,7 +146,7 @@ module cpu (
       .dmem_wdata   (dmem_wdata),
       .dmem_rdata   (dmem_rdata),
       .dmem_req     (dmem_req),
-      .dmem_ready   (addr_is_sdram ? mem_ready : 1'b1),
+      .dmem_ready   (addr_is_sdram ? sdram_d_ready : 1'b1),
       .irq_timer    (irq_timer),
       .irq_soft     (irq_soft),
       .irq_ext      (irq_ext)
@@ -154,37 +154,70 @@ module cpu (
   // ===========================================================================
   // PHANTOM CORE
   // ===========================================================================
+
+
+  // ===========================================================================
+  // I-CACHE  ──  instructions served from SDRAM behind a direct-mapped BRAM cache
+  // ===========================================================================
+    icache #(
+      .LINES      (512),
+      .LINE_BYTES (16),
+      .ADDR_W     (25)
+    ) u_icache (
+      .clk        (clk),
+      .resetn     (resetn),
+      .addr_a     (imem_addr_a),
+      .addr_b     (imem_addr_b),
+      .data_a     (imem_data_a),
+      .data_b     (imem_data_b),
+      .ready      (imem_ready),
+      .fill_addr  (fill_addr),
+      .fill_req   (fill_req),
+      .fill_rdata (fill_rdata),
+      .fill_ready (fill_ready)
+    );
+  // ===========================================================================
+  // I-CACHE
+  // ===========================================================================
  
 
   // ===========================================================================
-  // IMEM  ──  ECP5 EBR, dual read port, 16-bit × 4096 (8 KB total)
+  // SDRAM ARBITER  ──  shares mem_* between the data path and the I-cache fill
   // ===========================================================================
-  // Two independent 16-bit × 4096 arrays so each read port infers its own
-  // group of 4 × DP16KD blocks. This avoids the Yosys inference limitation
-  // where same-clock dual-port reads from a single array may fall back to
-  // flip-flop / LUT-RAM instead of EBR.
-  //
-  // READ timing: address presented in IF → registered at IF→ID clock edge →
-  //   data valid from start of ID stage (1-cycle latency).
-  //
-  // INITIALIZATION: $readmemh reads imem.hex, a 16-bit halfword hex file where
-  //   each line holds one 16-bit entry (little-endian halfword).
-  //   Generate from a compiled ELF using programs/bin2imem_hex.py.
+  // One SDRAM (one adapter port in soc.sv), two masters:
+  //   - data: an SDRAM-region load/store from the core (the core waits via mem_stall)
+  //   - fill: the I-cache pulling a line (read-only stream of word reads)
   // ===========================================================================
-    (* ram_style = "block" *) logic [15:0] imem_a [0:4095];
-    (* ram_style = "block" *) logic [15:0] imem_b [0:4095];
-
-    initial begin
-      $readmemh("imem.hex", imem_a);
-      $readmemh("imem.hex", imem_b);
-    end
+    logic d_req; assign d_req = dmem_req && addr_is_sdram;
+    logic arb_locked;   // a transaction is committed to one master
+    logic arb_fill;     // 1 = the committed master is the I-Cache fill
 
     always_ff @(posedge clk) begin
-      imem_data_a <= imem_a[imem_addr_a[12:1]];
-      imem_data_b <= imem_b[imem_addr_b[12:1]];
+      if (!resetn) begin
+        arb_locked   <= 1'b0;
+        arb_fill     <= 1'b0;
+      end else if (!arb_locked) begin
+        if (d_req || fill_req) begin
+          arb_locked <= 1'b1;
+          arb_fill   <= fill_req && !d_req;
+        end
+      end else if (mem_ready) begin
+        arb_locked   <= 1'b0;
+      end
     end
+
+    assign mem_req   = arb_locked && (arb_fill ? fill_req : d_req);
+    assign mem_addr  = arb_fill ? fill_addr : dmem_wr_addr;
+    assign mem_we    = arb_fill ? 1'b0      : dmem_we;
+    assign mem_wdata = dmem_wdata;                      // I-Cache fill is read-only
+    assign mem_be    = arb_fill ? 4'hF      : dmem_be;
+
+    assign sdram_d_ready = arb_locked && !arb_fill && mem_ready;
+    assign fill_ready    = arb_locked &&  arb_fill && mem_ready;
+    assign fill_rdata    = mem_rdata;
+
   // ===========================================================================
-  // IMEM
+  // SDRAM ARBITER
   // ===========================================================================
 
 
