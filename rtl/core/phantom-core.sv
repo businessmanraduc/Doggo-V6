@@ -37,15 +37,11 @@ module phantom_core (
 );
 
   // ===========================================================================
-  // BRANCH PREDICTOR DIMENSIONS
+  // FETCH FRONT-END DIMENSIONS
   // ===========================================================================
-    localparam integer PHT_DEPTH  = 8192;
-    localparam integer PHT_IDX_W  = 13;
-    localparam integer BTB_DEPTH  = 512;
-    localparam integer BTB_IDX_W  = 9;
-    localparam integer BHR_W      = 13;     // also used for PHT_IDX_W
+    localparam integer FETCH_DEPTH = 4; // decoupled fetch FIFO entries
   // ===========================================================================
-  // BRANCH PREDICTOR DIMENSIONS
+  // FETCH FRONT-END DIMENSIONS
   // ===========================================================================
 
 
@@ -53,34 +49,20 @@ module phantom_core (
   // PIPELINE REGISTER STORAGE
   // ===========================================================================
 
-    // ── IF/PreIF ─────────────────────────────────────────────────────────────
-    logic [BHR_W-1:0] r_bhr;            // Branch History Register
-    logic [31:0]      r_prepc;          // PrePC register fed by NextPC
-
-    // ── PreIF/IF ─────────────────────────────────────────────────────────────
-    logic [31:0]      r_pc;             // PC register
-    logic [31:0]      r_pc2;
-    logic [31:0]      r_pc4;
-    logic [31:0]      r_pc6;
-
-    logic [31:0]      r_predpc;         // BTB predicted target for r_pc
-    logic [31:0]      r_predpc2;        // BTB predicted target for r_pc2
-    logic             r_predvalid;      // BTB valid bit for r_predpc entry
-
-    logic             r_doPredict;      // registered "predict taken"
-    logic [31:0]      r_predictTarget;  // registered target  (= r_predpc)
-    logic [31:0]      r_predictTarget2; // registered target2 (= r_predpc2)
+    // ── Decoupled fetch front end ────────────────────────────────────────────
+    logic [31:0]      fe_instr;         // aligned instruction word
+    logic [31:0]      fe_pc;            // aligned instruction byte PC
+    logic             fe_isComp;        // 1 => 16-bit compressed
+    logic             fe_valid;         // 1 => aligner has instruction ready
+    logic             fe_consume;       // 1 => IF/ID accepts aligner head
+    logic             redirect_en;      // flush+reload fetch (branch/trap/mret)
+    logic [31:0]      redirect_pc;      // redirect target PC
 
     // ── IF/ID ────────────────────────────────────────────────────────────────
     logic [31:0]      if_id_pc;         // PC value for IF's instruction
     logic [31:0]      if_id_pc2;
     logic [31:0]      if_id_pc4;
     logic [31:0]      if_id_pc6;
-
-    logic [31:0]      if_id_predpc;     // BTB predicted target for PC
-    logic             if_id_predTaken;  // prediction taken flag
-    logic [BHR_W-1:0] if_id_phtIdx;     // PHT index used for current prediction
-    logic [1:0]       if_id_phtOld;     // PHT counter value at prediction time
 
     logic [31:0]      if_id_instr;      // full instruction word
     logic             if_id_isComp;     // 1 => current instruction is 16-bit C
@@ -89,18 +71,12 @@ module phantom_core (
     logic [4:0]       if_id_rs2Index;   // extracted rs2 index
     logic [4:0]       if_id_rdIndex;    // extracted rd  index
     logic             if_id_valid;      // 1 => real instruction (not a bubble)
-    logic             if_id_fetchOK;    // 1 => this instruction's fetch hit
 
     // ── ID/EX ────────────────────────────────────────────────────────────────
     logic [31:0]      id_ex_pc;         // PC value for ID's instruction
     logic [31:0]      id_ex_pc2;
     logic [31:0]      id_ex_pc4;
     logic [31:0]      id_ex_pc6;
-
-    logic [31:0]      id_ex_predpc;
-    logic             id_ex_predTaken;
-    logic [BHR_W-1:0] id_ex_phtIdx;
-    logic [1:0]       id_ex_phtOld;
 
     logic [31:0]      id_ex_instr;
     logic             id_ex_isComp;
@@ -141,19 +117,13 @@ module phantom_core (
     logic [31:0]      ex_ma_pc;
     logic [31:0]      ex_ma_linkAddr;   // PC + 2 or PC + 4 (JAL/JALR link)
 
-    logic [BHR_W-1:0] ex_ma_phtIdx;
-    logic [1:0]       ex_ma_phtOld;
     logic [31:0]      ex_ma_belowAddr;  // PC target if branch NOT taken
     logic [31:0]      ex_ma_belowAddr2;
     logic [31:0]      ex_ma_targetAddr; // actual branch/jump target
     logic [31:0]      ex_ma_targetAddr2;
     logic             ex_ma_branchTaken;
-    logic [31:0]      ex_ma_predpc;     // predicted target
-    logic             ex_ma_predTaken;  // prediction bit
 
     logic [31:0]      ex_ma_instr;
-    logic             ex_ma_isJump;     // 1 => current instruction is a jump
-    logic             ex_ma_isBranch;   // 1 => current instruction is a branch
 
     logic [4:0]       ex_ma_rdIndex;
     logic [31:0]      ex_ma_rs1Fwd;     // forwarded rs1 value
@@ -192,7 +162,9 @@ module phantom_core (
 
     logic             ma_wb_regWrite;
     logic [1:0]       ma_wb_wbSel;
+    /* verilator lint_off UNUSEDSIGNAL */
     logic             ma_wb_valid;
+    /* verilator lint_on  UNUSEDSIGNAL */
 
   // ===========================================================================
   // PIPELINE REGISTER STORAGE
@@ -205,30 +177,13 @@ module phantom_core (
   
     // ── Pipeline control ─────────────────────────────────────────────────────
     logic             stall;            // load-use stall
-    logic             imem_miss;        // ID-stage instruction came from missed fetch
     logic             mem_access;       // MA instr is a load/store
-    logic             dmem_stall;        // MA memory access not yet complete
-    logic             branch_miss;      // EX-stage misprediction
+    logic             dmem_stall;       // MA memory access not yet complete
+    logic             branch_miss;      // taken branch/jump resolved in MA
     logic             trap_en;
     logic             mret_en;
-    logic             flush_if_id;
     logic             flush_id_ex;
     logic             flush_ex_ma;
-    logic [31:0]      next_pc;
-    logic [31:0]      next_pc2;
-
-    // ── PreIF: branch predictor ──────────────────────────────────────────────
-    logic [31:0]      btb_rdata;        // BTB target combinational output
-    logic             btb_valid;        // BTB valid  combinational output
-    logic             pred_taken;       // prediction bit: pht_rdata[1]
-
-    // ── IF: PHT output ───────────────────────────────────────────────────────
-    logic [1:0]       pht_rdata;        // PHT combinational output
-    logic [BHR_W-1:0] pht_idx;          // PHT MAR output
-
-    // ── IF: instruction assembly ─────────────────────────────────────────────
-    logic [31:0]      if_instr;
-    logic             if_isCompressed;
 
     // ── IF: fast_decoder outputs ─────────────────────────────────────────────
     logic [4:0]       fd_rs1Index;
@@ -286,9 +241,9 @@ module phantom_core (
     logic [31:0]      ex_targetAddr2;
 
     logic [31:0]      truepc;
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [31:0]      truepc2;
-    logic             ma_targetMiss;
-    logic             ma_predMiss;
+    /* verilator lint_on  UNUSEDSIGNAL */
 
     // ── EX: operands & ALU ───────────────────────────────────────────────────
     logic [31:0]      wb_fwdValue;      // WB writeback value (also regfile wr_data)
@@ -347,164 +302,57 @@ module phantom_core (
 
 
   // ===========================================================================
-  // IF/PreIF PIPELINE REGISTER
+  // FETCH FRONT END  ──  decoupled fetch FIFO + RVC aligner (fetch_unit)
+  // ===========================================================================
+  // Fetch advances by a constant +4 (word-aligned) into the I-cache; the
+  // I-cache word lands in the fetch FIFO; the aligner extracts the 16/32-bit
+  // instruction off the fetch-address path.
   // ===========================================================================
 
-    btb #(
-      .BTB_DEPTH (BTB_DEPTH),
-      .BTB_IDX_W (BTB_IDX_W)
-    ) u_btb (
-      .clk           (clk),
-      .resetn        (resetn),
-      .next_pc       (next_pc),
-      .btb_rdata     (btb_rdata),
-      .btb_valid     (btb_valid),
-      .update_en     (((ex_ma_isBranch && ex_ma_branchTaken) || ex_ma_isJump) && ma_wb_valid),
-      .update_idx    (ma_wb_pc[BTB_IDX_W:1]),
-      .update_target (ex_ma_targetAddr)
+    fetch_unit #(
+      .DEPTH (FETCH_DEPTH)
+    ) u_fetch (
+      .clk         (clk),
+      .resetn      (resetn),
+      .redirect_en (redirect_en),
+      .redirect_pc (redirect_pc),
+      .consume     (fe_consume),
+      .imem_addr_a (imem_addr_a),
+      .imem_addr_b (imem_addr_b),
+      .imem_data_a (imem_data_a),
+      .imem_data_b (imem_data_b),
+      .imem_ready  (imem_ready),
+      .instr       (fe_instr),
+      .pc          (fe_pc),
+      .is_comp     (fe_isComp),
+      .valid       (fe_valid)
     );
 
-    assign pred_taken = pht_rdata[1] && r_predvalid;
-
-    // ── BHR: speculative join update, reset on any miss ──────────────────────
-    always_ff @(posedge clk) begin
-      if (!resetn || branch_miss || imem_miss) begin
-        r_bhr <= '0;
-      end else if (!stall && !ex_busy && !dmem_stall && !r_doPredict) begin
-        r_bhr <= {r_bhr[BHR_W-2:0], pred_taken};
-      end
-    end
-
-    // ── PrePC: update in the same manner as r_pc ─────────────────────────────
-    always_ff @(posedge clk) begin
-      r_prepc <= next_pc;
-    end
+    assign redirect_en = branch_miss || trap_en || mret_en;
+    assign redirect_pc = trap_en
+      ? csr_mtvec : mret_en
+      ? csr_mepc  : truepc;
 
   // ===========================================================================
-  // IF/PreIF PIPELINE REGISTER
+  // FETCH FRONT END
   // ===========================================================================
 
 
   // ===========================================================================
-  // PreIF/IF PIPELINE REGISTER
+  // IF STAGE  ──  fast decode of the aligner head instruction
   // ===========================================================================
 
-    pht #(
-      .PHT_DEPTH (PHT_DEPTH),
-      .PHT_IDX_W (PHT_IDX_W),
-      .BHR_W     (BHR_W)
-    ) u_pht (
-      .clk           (clk),
-      .r_bhr         (r_bhr),
-      .pre_pc        (r_prepc),
-      .pht_rdata     (pht_rdata),
-      .pht_mar       (pht_idx),
-      .update_en     (ex_ma_isBranch),
-      .update_idx    (ex_ma_phtIdx),
-      .update_old    (ex_ma_phtOld),
-      .update_taken  (ex_ma_branchTaken)
-    );
-
-    // ── Program Counter registers ────────────────────────────────────────────
-    always_ff @(posedge clk) begin
-      r_pc  <= next_pc;
-      r_pc2 <= next_pc2;
-      r_pc4 <= next_pc2 + 32'd2;
-      r_pc6 <= next_pc2 + 32'd4;
-    end
-
-    // ── Prediction registers: reset on any miss, trap or MRET ────────────────
-    always_ff @(posedge clk) begin
-      if (!resetn || branch_miss || imem_miss || trap_en || mret_en) begin
-        r_predpc    <= 32'd0;
-        r_predpc2   <= 32'd2;
-        r_predvalid <= 1'b0;
-      end else if (!stall && !ex_busy && !dmem_stall) begin
-        r_predpc    <= btb_rdata;
-        r_predpc2   <= btb_rdata + 32'd2;
-        r_predvalid <= btb_valid;
-      end
-    end
-
-    // ── Delayed Prediction register ──────────────────────────────────────────
-    always_ff @(posedge clk) begin
-      if (!resetn || branch_miss || imem_miss || trap_en || mret_en) begin
-        r_doPredict <= 1'b0;
-      end else if (!stall && !ex_busy && !dmem_stall) begin
-        if (r_doPredict) begin
-          r_doPredict      <= 1'b0;
-        end else begin
-          r_doPredict      <= pred_taken;
-          r_predictTarget  <= r_predpc;
-          r_predictTarget2 <= r_predpc2;
-        end
-      end
-    end
-
-  // ===========================================================================
-  // PreIF/IF PIPELINE REGISTER
-  // ===========================================================================
-
-
-  // ===========================================================================
-  // IF STAGE  ──  Instruction assembly, fast decode, immediate generation
-  // ===========================================================================
-  // NextPC MUX Priority (highest first):
-  //   0: !resetn          → RESET_VECTOR           (reset)
-  //   1: trap_en          → csr_mtvec              (exception entry)
-  //   2: mret_en          → csr_mepc               (return from trap)
-  //   3: branch_miss      → truepc                 (EX-stage misprediction)
-  //   4: stall            → r_pc                   (load-use stall, hold PC)
-  //   5: r_doPredict      → r_predpc               (follow branch prediction)
-  //   6: default          → pc_inc_seq (+2 or +4)  (sequential advance)
-  // ===========================================================================
-
-    assign imem_addr_a = next_pc;
-    assign imem_addr_b = next_pc2;
-    assign imem_miss   = if_id_valid && !if_id_fetchOK && !branch_miss
-      && !trap_en && !mret_en && !dmem_stall && !ex_busy;
-
-    // ── Pre-calculated NextPC targets ────────────────────────────────────────
-    logic [31:0] pc_inc_seq;      assign pc_inc_seq      = if_isCompressed ? r_pc2 : r_pc4;
-    logic [31:0] pc_inc_seq2;     assign pc_inc_seq2     = if_isCompressed ? r_pc4 : r_pc6;
-    logic [31:0] csr_mtvec2;      assign csr_mtvec2      = csr_mtvec + 32'd2;
-    logic [31:0] csr_mepc2;       assign csr_mepc2       = csr_mepc  + 32'd2;
-
-    // ── NextPC Control Logic ─────────────────────────────────────────────────
-    always_comb begin
-      next_pc  = pc_inc_seq;
-      next_pc2 = pc_inc_seq2;
-
-      priority case (1'b1)
-        (!resetn):        begin next_pc = `RESET_VECTOR;   next_pc2 = `RESET_VECTOR + 32'd2; end
-        (trap_en):        begin next_pc = csr_mtvec;       next_pc2 = csr_mtvec2;            end
-        (mret_en):        begin next_pc = csr_mepc;        next_pc2 = csr_mepc2;             end
-        (branch_miss):    begin next_pc = truepc;          next_pc2 = truepc2;               end
-        (imem_miss):      begin next_pc = if_id_pc;        next_pc2 = if_id_pc2;             end
-        (dmem_stall):     begin next_pc = r_pc;            next_pc2 = r_pc2;                 end
-        (stall):          begin next_pc = r_pc;            next_pc2 = r_pc2;                 end
-        (ex_busy):        begin next_pc = r_pc;            next_pc2 = r_pc2;                 end
-        (r_doPredict):    begin next_pc = r_predictTarget; next_pc2 = r_predictTarget2;      end
-        default:          begin next_pc = pc_inc_seq;      next_pc2 = pc_inc_seq2;           end
-      endcase
-    end
-
-    // ── Instruction assembly ─────────────────────────────────────────────────
-    assign if_isCompressed = (imem_data_a[1:0] != 2'b11);
-    assign if_instr     =
-      if_isCompressed   ? {16'd0,       imem_data_a}
-      /*nonCompressed*/ : {imem_data_b, imem_data_a};
-
-    // ── fast_decoder ─────────────────────────────────────────────────────────
     fast_decoder u_fd (
-      .instrWord      (if_instr),
-      .is_compressed  (if_isCompressed),
+      .instrWord      (fe_instr),
+      .is_compressed  (fe_isComp),
       .rs1_index      (fd_rs1Index),
       .rs2_index      (fd_rs2Index),
       .rd_index       (fd_rdIndex),
       .is_load        (fd_isLoad),
       .is_branch_jump (fd_isBranchJump)
     );
+
+    assign fe_consume = fe_valid && !stall && !ex_busy && !dmem_stall && !redirect_en;
 
   // ===========================================================================
   // IF STAGE
@@ -514,43 +362,48 @@ module phantom_core (
   // ===========================================================================
   // IF/ID PIPELINE REGISTER
   // ===========================================================================
+  // Latches the aligner head into ID. Priority:
+  //   redirect                     -> bubble (flush)
+  //   stall / ex_busy / dmem_stall -> hold
+  //   aligner valid                -> advance (load instruction)
+  //   aligner not valid            -> bubble (fetch starved / I-cache miss)
+  // ===========================================================================
 
-    assign flush_if_id = branch_miss || imem_miss || trap_en || mret_en
-                      || (r_doPredict && !stall && !ex_busy && !dmem_stall);
     always_ff @(posedge clk) begin
-      if ((!ex_busy && !dmem_stall) || flush_if_id) begin
-        if (!resetn || flush_if_id) begin   // squash -> insert bubble
-          if_id_pc        <= 32'd0;
-          if_id_pc2       <= 32'd0;
-          if_id_pc4       <= 32'd0;
-          if_id_pc6       <= 32'd0;
-          if_id_predpc    <= 32'd0;
-          if_id_predTaken <= 1'b0;
-          if_id_phtIdx    <= '0;
-          if_id_phtOld    <= 2'b01;
-          if_id_instr     <= `NOP_INSTR;
-          if_id_isComp    <= 1'b0;
-          if_id_rs1Index  <= 5'd0;
-          if_id_rs2Index  <= 5'd0;
-          if_id_rdIndex   <= 5'd0;
-          if_id_valid     <= 1'b0;
-          if_id_fetchOK   <= 1'b1;
-        end else if (!stall) begin          // advance (on stall: hold)
-          if_id_pc        <= r_pc;
-          if_id_pc2       <= r_pc2;
-          if_id_pc4       <= r_pc4;
-          if_id_pc6       <= r_pc6;
-          if_id_predpc    <= r_predpc;
-          if_id_predTaken <= pred_taken;
-          if_id_phtIdx    <= pht_idx;
-          if_id_phtOld    <= pht_rdata;
-          if_id_instr     <= if_instr;
-          if_id_isComp    <= if_isCompressed;
-          if_id_rs1Index  <= fd_rs1Index;
-          if_id_rs2Index  <= fd_rs2Index;
-          if_id_rdIndex   <= fd_rdIndex;
-          if_id_valid     <= 1'b1;
-          if_id_fetchOK   <= imem_ready;
+      if (!resetn || redirect_en) begin                 // flush -> bubble
+        if_id_pc       <= 32'd0;
+        if_id_pc2      <= 32'd0;
+        if_id_pc4      <= 32'd0;
+        if_id_pc6      <= 32'd0;
+        if_id_instr    <= `NOP_INSTR;
+        if_id_isComp   <= 1'b0;
+        if_id_rs1Index <= 5'd0;
+        if_id_rs2Index <= 5'd0;
+        if_id_rdIndex  <= 5'd0;
+        if_id_valid    <= 1'b0;
+      end else if (!stall && !ex_busy && !dmem_stall) begin
+        if (fe_valid) begin                             // advance
+          if_id_pc       <= fe_pc;
+          if_id_pc2      <= fe_pc + 32'd2;
+          if_id_pc4      <= fe_pc + 32'd4;
+          if_id_pc6      <= fe_pc + 32'd6;
+          if_id_instr    <= fe_instr;
+          if_id_isComp   <= fe_isComp;
+          if_id_rs1Index <= fd_rs1Index;
+          if_id_rs2Index <= fd_rs2Index;
+          if_id_rdIndex  <= fd_rdIndex;
+          if_id_valid    <= 1'b1;
+        end else begin                                  // fetch starved -> bubble
+          if_id_pc       <= 32'd0;
+          if_id_pc2      <= 32'd0;
+          if_id_pc4      <= 32'd0;
+          if_id_pc6      <= 32'd0;
+          if_id_instr    <= `NOP_INSTR;
+          if_id_isComp   <= 1'b0;
+          if_id_rs1Index <= 5'd0;
+          if_id_rs2Index <= 5'd0;
+          if_id_rdIndex  <= 5'd0;
+          if_id_valid    <= 1'b0;
         end
       end
     end
@@ -632,18 +485,13 @@ module phantom_core (
   // ID/EX PIPELINE REGISTER
   // ===========================================================================
 
-    assign flush_id_ex = branch_miss || imem_miss || trap_en || mret_en;
+    assign flush_id_ex = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
       if ((!ex_busy && !dmem_stall) || flush_id_ex) begin
       id_ex_pc          <= (flush_id_ex || stall) ? 32'd0      : if_id_pc;
       id_ex_pc2         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc2;
       id_ex_pc4         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc4;
       id_ex_pc6         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc6;
-
-      id_ex_predpc      <= (flush_id_ex || stall) ? 32'd0      : if_id_predpc;
-      id_ex_predTaken   <= (flush_id_ex || stall) ? 1'b0       : if_id_predTaken;
-      id_ex_phtIdx      <= (flush_id_ex || stall) ? '0         : if_id_phtIdx;
-      id_ex_phtOld      <= (flush_id_ex || stall) ? 2'b01      : if_id_phtOld;
 
       id_ex_instr       <= (flush_id_ex || stall) ? `NOP_INSTR : if_id_instr;
       id_ex_isComp      <= (flush_id_ex || stall) ? 1'b0       : if_id_isComp;
@@ -797,19 +645,13 @@ module phantom_core (
       ex_ma_pc          <= (flush_ex_ma) ? 32'd0      : id_ex_pc;
       ex_ma_linkAddr    <= (flush_ex_ma) ? 32'd0      : ex_linkAddr;
  
-      ex_ma_phtIdx      <= (flush_ex_ma) ? '0         : id_ex_phtIdx;
-      ex_ma_phtOld      <= (flush_ex_ma) ? 2'b01      : id_ex_phtOld;
       ex_ma_belowAddr   <= (flush_ex_ma) ? 32'd0      : ex_belowAddr;
       ex_ma_belowAddr2  <= (flush_ex_ma) ? 32'd2      : ex_belowAddr2;
       ex_ma_targetAddr  <= (flush_ex_ma) ? 32'd0      : ex_targetAddr;
       ex_ma_targetAddr2 <= (flush_ex_ma) ? 32'd0      : ex_targetAddr2;
       ex_ma_branchTaken <= (flush_ex_ma) ? 1'b0       : ex_branchTaken;
-      ex_ma_predpc      <= (flush_ex_ma) ? 32'd0      : id_ex_predpc;
-      ex_ma_predTaken   <= (flush_ex_ma) ? 1'b0       : id_ex_predTaken;
 
       ex_ma_instr       <= (flush_ex_ma) ? `NOP_INSTR : id_ex_instr;
-      ex_ma_isJump      <= (flush_ex_ma) ? 1'b0       : id_ex_isJump;
-      ex_ma_isBranch    <= (flush_ex_ma) ? 1'b0       : id_ex_isBranch;
  
       ex_ma_rdIndex     <= (flush_ex_ma) ? 5'd0       : id_ex_rdIndex;
       ex_ma_rs1Fwd      <= (flush_ex_ma) ? 32'd0      : fwd_rs1Value;
@@ -890,10 +732,7 @@ module phantom_core (
     assign dmem_stall  = resetn && dmem_req && !dmem_ready;
 
     // ── Branch Miss Detection ────────────────────────────────────────────────
-    assign ma_targetMiss = (ex_ma_targetAddr  != ex_ma_predpc);
-    assign ma_predMiss   = (ex_ma_branchTaken != ex_ma_predTaken)
-                        || (ex_ma_branchTaken && ma_targetMiss);
-    assign branch_miss   = !trap_en && !mret_en && ma_predMiss;
+    assign branch_miss   = !trap_en && !mret_en && ex_ma_branchTaken;
 
     assign truepc  = ex_ma_branchTaken ? ex_ma_targetAddr  : ex_ma_belowAddr;
     assign truepc2 = ex_ma_branchTaken ? ex_ma_targetAddr2 : ex_ma_belowAddr2;
