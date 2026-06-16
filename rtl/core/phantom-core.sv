@@ -87,6 +87,7 @@ module phantom_core (
     logic             id_ex_isMulDiv;   // 1 => current instruction is RV32M
     logic             id_ex_isBranch;   // 1 => current instruction is a branch
     logic [2:0]       id_ex_branchType; // type of decoded branch
+    logic             id_ex_predTaken;  // 1 => branch taken prediction
 
     logic [4:0]       id_ex_rs1Index;
     /* verilator lint_off UNUSEDSIGNAL */
@@ -122,6 +123,7 @@ module phantom_core (
     logic [31:0]      ex_ma_targetAddr; // actual branch/jump target
     logic [31:0]      ex_ma_targetAddr2;
     logic             ex_ma_branchTaken;
+    logic             ex_ma_predTaken;  // prediction carried for MA verification
 
     logic [31:0]      ex_ma_instr;
 
@@ -223,6 +225,12 @@ module phantom_core (
 
     // ── ID: imm_generator output ─────────────────────────────────────────────
     logic [31:0]      id_imm;
+
+    // ── ID: static branch predictor (BTFNT) ──────────────────────────────────
+    logic             pred_taken;       // 1 => predict branch/jump taken
+    logic [31:0]      pred_target;      // predicted target
+    logic             pred_redirect;    // ID-sourced predicted-taken redirect
+    logic             ma_redirect;      // MA-sourced (branch_miss/trap/mret)
 
     // ── Scoreboard control ───────────────────────────────────────────────────
     logic             rs1_ready;        // ID rs1 operand available
@@ -328,10 +336,13 @@ module phantom_core (
       .valid       (fe_valid)
     );
 
-    assign redirect_en = branch_miss || trap_en || mret_en;
-    assign redirect_pc = trap_en
-      ? csr_mtvec : mret_en
-      ? csr_mepc  : truepc;
+    assign ma_redirect = branch_miss || trap_en || mret_en;
+    assign redirect_en = ma_redirect || pred_redirect;
+    assign redirect_pc =
+      trap_en     ? csr_mtvec :
+      mret_en     ? csr_mepc  :
+      branch_miss ? truepc    :
+    pred_target;
 
   // ===========================================================================
   // FETCH FRONT END
@@ -476,6 +487,14 @@ module phantom_core (
     assign ex_undo_en = id_ex_valid && id_ex_regWrite && (branch_miss || trap_en || mret_en);
     assign ma_wr_en   = ex_ma_valid && ex_ma_regWrite && !dmem_stall;
 
+    // ── Static branch predictor (BTFNT) ──────────────────────────────────────
+    assign pred_target = if_id_pc + id_imm;
+    assign pred_taken  = if_id_valid && (
+      (id_isJump   && !id_isJalr) ||
+      (id_isBranch && id_imm[31])
+    );
+    assign pred_redirect = pred_taken && !stall && !ex_busy && !dmem_stall && !ma_redirect;
+
   // ===========================================================================
   // ID STAGE
   // ===========================================================================
@@ -502,6 +521,7 @@ module phantom_core (
       id_ex_isMulDiv    <= (flush_id_ex || stall) ? 1'b0       : id_isMulDiv;
       id_ex_isBranch    <= (flush_id_ex || stall) ? 1'b0       : id_isBranch;
       id_ex_branchType  <= (flush_id_ex || stall) ? 3'b000     : id_branchType;
+      id_ex_predTaken   <= (flush_id_ex || stall) ? 1'b0       : pred_taken;
 
       id_ex_rs1Index    <= (flush_id_ex || stall) ? 5'd0       : if_id_rs1Index;
       id_ex_rs2Index    <= (flush_id_ex || stall) ? 5'd0       : if_id_rs2Index;
@@ -650,6 +670,7 @@ module phantom_core (
       ex_ma_targetAddr  <= (flush_ex_ma) ? 32'd0      : ex_targetAddr;
       ex_ma_targetAddr2 <= (flush_ex_ma) ? 32'd0      : ex_targetAddr2;
       ex_ma_branchTaken <= (flush_ex_ma) ? 1'b0       : ex_branchTaken;
+      ex_ma_predTaken   <= (flush_ex_ma) ? 1'b0       : id_ex_predTaken;
 
       ex_ma_instr       <= (flush_ex_ma) ? `NOP_INSTR : id_ex_instr;
  
@@ -732,7 +753,7 @@ module phantom_core (
     assign dmem_stall  = resetn && dmem_req && !dmem_ready;
 
     // ── Branch Miss Detection ────────────────────────────────────────────────
-    assign branch_miss   = !trap_en && !mret_en && ex_ma_branchTaken;
+    assign branch_miss   = !trap_en && !mret_en && (ex_ma_branchTaken != ex_ma_predTaken);
 
     assign truepc  = ex_ma_branchTaken ? ex_ma_targetAddr  : ex_ma_belowAddr;
     assign truepc2 = ex_ma_branchTaken ? ex_ma_targetAddr2 : ex_ma_belowAddr2;

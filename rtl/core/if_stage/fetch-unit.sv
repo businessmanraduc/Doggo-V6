@@ -44,25 +44,26 @@ module fetch_unit #(
   logic [31:0] fetch_pc;            // next word address to fetch
   logic [31:0] flight_pc;           // address of the in-flight request
   logic        inFlight;            // a request is currently in flight
+  logic        stalling;            // re-sending flight_pc while I-Cache fills
 
   logic [31:0]   fifo_word [0:DEPTH-1];
   logic [IW-1:0] head, tail;
   logic [IW:0]   count;
 
-  logic [31:0] respWord; assign respWord = {imem_data_b, imem_data_a};
-  logic        respHit;  assign respHit  = inFlight &&  imem_ready && !redirect_en;
-  logic        respMiss; assign respMiss = inFlight && !imem_ready && !redirect_en;
-  logic        pushResp; assign pushResp = respHit  && (count < (IW+1)'(DEPTH)); 
+  logic [31:0] respWord;   assign respWord   = {imem_data_b, imem_data_a};
+  logic        resultHit;  assign resultHit  = inFlight  &&  imem_ready && !redirect_en;
+  logic        resultMiss; assign resultMiss = inFlight  && !imem_ready && !redirect_en;
+  logic        pushResp;   assign pushResp   = resultHit && (count < (IW+1)'(DEPTH)); 
   logic        pop;
 
   logic [IW:0] occupancyNext; // issue only if current cycle push/pop leaves free slot
   assign occupancyNext = count + (pushResp ? (IW+1)'(1) : '0) - (pop ? (IW+1)'(1) : '0);
-  logic can_issue; assign can_issue = !redirect_en && !respMiss
+  logic can_issue; assign can_issue = !redirect_en && !stalling && !resultMiss
     && (occupancyNext < (IW+1)'(DEPTH))
-    && (respHit || !inFlight);
+    && (resultHit || !inFlight);
 
-  assign imem_addr_a = respMiss ? flight_pc : fetch_pc;
-  assign imem_addr_b = imem_addr_a + 32'd2; // hate this fixed add-by-2 operation
+  assign imem_addr_a = stalling ? flight_pc : fetch_pc;
+  assign imem_addr_b = imem_addr_a + 32'd2;
 
 
   // ===========================================================================
@@ -98,9 +99,11 @@ module fetch_unit #(
     if (!resetn) begin
       fetch_pc <= `RESET_VECTOR; flight_pc <= 32'd0; inFlight <= 1'b0;
       head <= '0; tail <= '0; count <= '0; align_pc <= `RESET_VECTOR;
+      stalling <= 1'b0;
     end else if (redirect_en) begin
       fetch_pc <= {redirect_pc[31:2], 2'b00}; inFlight <= 1'b0;
       head <= '0; tail <= '0; count <= '0; align_pc <= redirect_pc;
+      stalling <= 1'b0; flight_pc <= 32'd0;
     end else begin
       if (pushResp) begin
         fifo_word[tail] <= respWord;
@@ -110,8 +113,13 @@ module fetch_unit #(
       if (pop) head <= head + IW'(1);
       count <= occupancyNext;
 
-      if (respMiss) begin
-        inFlight <= 1'b1;
+      // ── Fetch engine ───────────────────────────────────────────────────────
+      if (resultMiss) begin
+        stalling  <= 1'b1;
+        inFlight  <= 1'b1;
+      end else if (stalling) begin
+        stalling  <= 1'b0;
+        inFlight  <= 1'b0;
       end else if (can_issue) begin
         flight_pc <= fetch_pc;
         fetch_pc  <= fetch_pc + 32'd4;
