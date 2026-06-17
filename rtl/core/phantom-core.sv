@@ -1,12 +1,12 @@
 `include "isa.vh"
 // =============================================================================
-// PHANTOM-32  ──  Phantom Core  (6-Stage Pipelined RV32IC Execution Core)
+// PHANTOM-32  ──  Phantom Core  (RV32IMC in-order execution core)
 // =============================================================================
-// Single execution pipeline
-// IMEM and DMEM held in common by cpu module for all execution cores
-// PHANTOM-32 core pipeline:
+// Decoupled fetch front end (fetch_unit: PC-gen + I$ + fetch FIFO + RVC aligner,
+// with a bimodal PHT) feeding a 4-stage in-order backend. IMEM/DMEM are held in
+// common by the cpu module.
 //
-//   PreIF -> IF -> ID -> EX -> MA -> WB
+//   [ decoupled fetch ] -> ID -> EX -> MA -> WB
 //
 // =============================================================================
 module phantom_core (
@@ -63,7 +63,6 @@ module phantom_core (
     logic [31:0]      if_id_pc;         // PC value for IF's instruction
     logic [31:0]      if_id_pc2;
     logic [31:0]      if_id_pc4;
-    logic [31:0]      if_id_pc6;
 
     logic [31:0]      if_id_instr;      // full instruction word
     logic             if_id_isComp;     // 1 => current instruction is 16-bit C
@@ -78,12 +77,10 @@ module phantom_core (
     logic [31:0]      id_ex_pc;         // PC value for ID's instruction
     logic [31:0]      id_ex_pc2;
     logic [31:0]      id_ex_pc4;
-    logic [31:0]      id_ex_pc6;
 
     logic [31:0]      id_ex_instr;
     logic             id_ex_isComp;
     logic [31:0]      id_ex_imm;
-    logic [31:0]      id_ex_imm2;
     logic             id_ex_isJump;     // 1 => current instruction is a jump
     logic             id_ex_isJalr;     // 1 => current instruction is a jalr
     logic             id_ex_isMulDiv;   // 1 => current instruction is RV32M
@@ -93,9 +90,6 @@ module phantom_core (
     logic [1:0]       id_ex_phtOld;     // PHT counter read at predict time
 
     logic [4:0]       id_ex_rs1Index;
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic [4:0]       id_ex_rs2Index;
-    /* verilator lint_on  UNUSEDSIGNAL */
     logic [4:0]       id_ex_rdIndex;
     logic [31:0]      id_ex_rs1Data;    // rs1 data fetched from the regfile
     logic [31:0]      id_ex_rs2Data;    // rs2 data fetched from the regfile
@@ -122,9 +116,7 @@ module phantom_core (
     logic [31:0]      ex_ma_linkAddr;   // PC + 2 or PC + 4 (JAL/JALR link)
 
     logic [31:0]      ex_ma_belowAddr;  // PC target if branch NOT taken
-    logic [31:0]      ex_ma_belowAddr2;
     logic [31:0]      ex_ma_targetAddr; // actual branch/jump target
-    logic [31:0]      ex_ma_targetAddr2;
     logic             ex_ma_branchTaken;
     logic             ex_ma_predTaken;  // prediction carried for MA verification
     logic             ex_ma_isBranch;   // 1 => conditional branch
@@ -169,9 +161,6 @@ module phantom_core (
 
     logic             ma_wb_regWrite;
     logic [1:0]       ma_wb_wbSel;
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic             ma_wb_valid;
-    /* verilator lint_on  UNUSEDSIGNAL */
 
   // ===========================================================================
   // PIPELINE REGISTER STORAGE
@@ -196,10 +185,6 @@ module phantom_core (
     logic [4:0]       fd_rs1Index;
     logic [4:0]       fd_rs2Index;
     logic [4:0]       fd_rdIndex;
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic             fd_isLoad;
-    logic             fd_isBranchJump;
-    /* verilator lint_on  UNUSEDSIGNAL */
 
     // ── ID: control_unit outputs ─────────────────────────────────────────────
     logic             id_isJump;
@@ -249,14 +234,9 @@ module phantom_core (
     logic             branch_taken;
     logic             ex_branchTaken;
     logic [31:0]      ex_belowAddr;
-    logic [31:0]      ex_belowAddr2;
     logic [31:0]      ex_targetAddr;
-    logic [31:0]      ex_targetAddr2;
 
     logic [31:0]      truepc;
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic [31:0]      truepc2;
-    /* verilator lint_on  UNUSEDSIGNAL */
 
     // ── EX: operands & ALU ───────────────────────────────────────────────────
     logic [31:0]      wb_fwdValue;      // WB writeback value (also regfile wr_data)
@@ -374,12 +354,9 @@ module phantom_core (
 
     fast_decoder u_fd (
       .instrWord      (fe_instr),
-      .is_compressed  (fe_isComp),
       .rs1_index      (fd_rs1Index),
       .rs2_index      (fd_rs2Index),
-      .rd_index       (fd_rdIndex),
-      .is_load        (fd_isLoad),
-      .is_branch_jump (fd_isBranchJump)
+      .rd_index       (fd_rdIndex)
     );
 
     assign fe_consume = fe_valid && !stall && !ex_busy && !dmem_stall && !redirect_en;
@@ -404,7 +381,6 @@ module phantom_core (
         if_id_pc       <= 32'd0;
         if_id_pc2      <= 32'd0;
         if_id_pc4      <= 32'd0;
-        if_id_pc6      <= 32'd0;
         if_id_instr    <= `NOP_INSTR;
         if_id_isComp   <= 1'b0;
         if_id_rs1Index <= 5'd0;
@@ -416,7 +392,6 @@ module phantom_core (
           if_id_pc       <= fe_pc;
           if_id_pc2      <= fe_pc + 32'd2;
           if_id_pc4      <= fe_pc + 32'd4;
-          if_id_pc6      <= fe_pc + 32'd6;
           if_id_instr    <= fe_instr;
           if_id_isComp   <= fe_isComp;
           if_id_rs1Index <= fd_rs1Index;
@@ -427,7 +402,6 @@ module phantom_core (
           if_id_pc       <= 32'd0;
           if_id_pc2      <= 32'd0;
           if_id_pc4      <= 32'd0;
-          if_id_pc6      <= 32'd0;
           if_id_instr    <= `NOP_INSTR;
           if_id_isComp   <= 1'b0;
           if_id_rs1Index <= 5'd0;
@@ -529,12 +503,10 @@ module phantom_core (
       id_ex_pc          <= (flush_id_ex || stall) ? 32'd0      : if_id_pc;
       id_ex_pc2         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc2;
       id_ex_pc4         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc4;
-      id_ex_pc6         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc6;
 
       id_ex_instr       <= (flush_id_ex || stall) ? `NOP_INSTR : if_id_instr;
       id_ex_isComp      <= (flush_id_ex || stall) ? 1'b0       : if_id_isComp;
       id_ex_imm         <= (flush_id_ex || stall) ? 32'd0      : id_imm;
-      id_ex_imm2        <= (flush_id_ex || stall) ? 32'd2      : (id_imm + 32'd2);
       id_ex_isJump      <= (flush_id_ex || stall) ? 1'b0       : id_isJump;
       id_ex_isJalr      <= (flush_id_ex || stall) ? 1'b0       : id_isJalr;
       id_ex_isMulDiv    <= (flush_id_ex || stall) ? 1'b0       : id_isMulDiv;
@@ -544,7 +516,6 @@ module phantom_core (
       id_ex_phtOld      <= (flush_id_ex || stall) ? 2'b01      : if_id_phtCounter;
 
       id_ex_rs1Index    <= (flush_id_ex || stall) ? 5'd0       : if_id_rs1Index;
-      id_ex_rs2Index    <= (flush_id_ex || stall) ? 5'd0       : if_id_rs2Index;
       id_ex_rdIndex     <= (flush_id_ex || stall) ? 5'd0       : if_id_rdIndex;
       id_ex_rs1Data     <= (flush_id_ex || stall) ? 32'd0      : (id_aluLHS ? if_id_pc  : rf_rs1Data);
       id_ex_rs2Data     <= (flush_id_ex || stall) ? 32'd0      : (id_aluRHS ? id_imm : rf_rs2Data);
@@ -574,7 +545,7 @@ module phantom_core (
 
 
   // ===========================================================================
-  // EX STAGE  ──  ALU, branch evaluation, Level 1 branch resolution
+  // EX STAGE  ──  ALU, muldiv, branch evaluation + target, CSR read
   // ===========================================================================
 
     // ── EX operands ──────────────────────────────────────────────────────────
@@ -627,16 +598,12 @@ module phantom_core (
       .pc             (id_ex_pc),
       .pc2            (id_ex_pc2),
       .pc4            (id_ex_pc4),
-      .pc6            (id_ex_pc6),
       .rs1_data       (fwd_rs1Value),
       .immediate      (id_ex_imm),
-      .immediate_2    (id_ex_imm2),
       .is_jalr        (id_ex_isJalr),
       .is_comp        (id_ex_isComp),
       .below_addr     (ex_belowAddr),
-      .below_addr_2   (ex_belowAddr2),
-      .target_addr    (ex_targetAddr),
-      .target_addr_2  (ex_targetAddr2)
+      .target_addr    (ex_targetAddr)
     );
 
     // ── Branch Taken Detection ───────────────────────────────────────────────
@@ -686,9 +653,7 @@ module phantom_core (
       ex_ma_linkAddr    <= (flush_ex_ma) ? 32'd0      : ex_linkAddr;
  
       ex_ma_belowAddr   <= (flush_ex_ma) ? 32'd0      : ex_belowAddr;
-      ex_ma_belowAddr2  <= (flush_ex_ma) ? 32'd2      : ex_belowAddr2;
       ex_ma_targetAddr  <= (flush_ex_ma) ? 32'd0      : ex_targetAddr;
-      ex_ma_targetAddr2 <= (flush_ex_ma) ? 32'd0      : ex_targetAddr2;
       ex_ma_branchTaken <= (flush_ex_ma) ? 1'b0       : ex_branchTaken;
       ex_ma_predTaken   <= (flush_ex_ma) ? 1'b0       : id_ex_predTaken;
       ex_ma_isBranch    <= (flush_ex_ma) ? 1'b0       : id_ex_isBranch;
@@ -727,8 +692,8 @@ module phantom_core (
 
 
   // ===========================================================================
-  // MA STAGE  ──  Trap detection, CSR access, DMEM access, load extraction
-  //               PHT/BTB update
+  // MA STAGE  ──  Trap detection, CSR access, DMEM access, load extraction,
+  //               branch resolution + PHT/BTB update
   // ===========================================================================
  
     // ── trap_unit ────────────────────────────────────────────────────────────
@@ -778,7 +743,6 @@ module phantom_core (
     assign branch_miss   = !trap_en && !mret_en && (ex_ma_branchTaken != ex_ma_predTaken);
 
     assign truepc  = ex_ma_branchTaken ? ex_ma_targetAddr  : ex_ma_belowAddr;
-    assign truepc2 = ex_ma_branchTaken ? ex_ma_targetAddr2 : ex_ma_belowAddr2;
 
     // ── CSR Read-Modify-Write ────────────────────────────────────────────────
     assign csr_zimm     = {27'd0, ex_ma_instr[19:15]};
@@ -862,7 +826,6 @@ module phantom_core (
       ma_wb_linkAddr  <= (dmem_stall)            ? 32'd0  : ex_ma_linkAddr;
       ma_wb_regWrite  <= (dmem_stall || !resetn) ? 1'b0   : ex_ma_regWrite && !trap_en;
       ma_wb_wbSel     <= (dmem_stall)            ? 2'b00  : ex_ma_wbSel;
-      ma_wb_valid     <= (dmem_stall || !resetn) ? 1'b0   : ex_ma_valid;
     end
 
   // ===========================================================================

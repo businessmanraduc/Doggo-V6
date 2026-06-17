@@ -2,11 +2,11 @@
 // =============================================================================
 // PHANTOM-32  ──  IF-Stage Decoder
 // =============================================================================
-// Lightweight register index extractor for the IF pipeline stage.
-// Provides register indices and key flags ONE STAGE EARLY so the hazard
-// unit can detect load-use dependencies before the ID stage decodes fully.
+// Lightweight register index extractor for the aligner output. Provides the
+// rs1/rs2/rd indices at the IF/ID boundary so the regfile read + operand-ready
+// scoreboard can run in ID without waiting for full control_unit decode.
 //
-// Implements PARALLEL 16/32-bit decode paths - no decompressor step.
+// Implements PARALLEL 16/32-bit decode paths (no decompressor)
 //
 // Register index mapping for compressed instructions:
 //   Full (CR/CI/CSS): instrWord[11:7] and instrWord[6:2]   → x0–x31
@@ -17,12 +17,9 @@ module fast_decoder (
   /* verilator lint_off UNUSEDSIGNAL */
   input  logic [31:0] instrWord,      // raw fetched instruction word
   /* verilator lint_on UNUSEDSIGNAL */
-  input  logic        is_compressed,  // 1 = 16-bit C instruction
   output logic [4:0]  rs1_index,      // source register 1
   output logic [4:0]  rs2_index,      // source register 2
-  output logic [4:0]  rd_index,       // destination register
-  output logic        is_load,        // 1 = load instruction (triggers hazard check)
-  output logic        is_branch_jump  // 1 = conditional branch / jump
+  output logic [4:0]  rd_index        // destination register
 );
 
   // =============================================================================
@@ -45,28 +42,6 @@ module fast_decoder (
   // ── Full register fields (CR/CI/CSS/CIW formats → x0-x31) ────────────────
   logic [4:0] rs1_full;  assign rs1_full  = instrWord[11:7]; // rd/rs1 field
   logic [4:0] rs2_full;  assign rs2_full  = instrWord[6:2];  // rs2 field
-
-
-  // =============================================================================
-  // IS_LOAD DETECTION
-  // =============================================================================
-  logic is_load32; assign is_load32 = (op32 == `OP_LOAD);
-  logic is_load16; assign is_load16 = (quad == `CQ0 && cfunc3 == `CF3_C_LW) ||
-                                      (quad == `CQ2 && cfunc3 == `CF3_C_LWSP);
-  assign is_load = is_compressed ? is_load16 : is_load32;
-
-
-  // =============================================================================
-  // IS_BRANCH_JUMP DETECTION
-  // =============================================================================
-  logic isbj32; assign isbj32 = (op32 == `OP_BRANCH) || (op32 == `OP_JAL) || (op32 == `OP_JALR); 
-  logic isbj16; assign isbj16 =
-    (quad == `CQ1 && (cfunc3 == `CF3_C_J    || cfunc3 == `CF3_C_JAL ||
-                      cfunc3 == `CF3_C_BEQZ || cfunc3 == `CF3_C_BNEZ)) ||
-    (quad == `CQ2 &&  cfunc3 == `CF3_C_MISC && instrWord[6:2] == 5'd0  &&
-                    ((instrWord[12] == 1'b0) || (instrWord[12] == 1'b1 &&
-                    instrWord[11:7] != 5'd0)));
-  assign is_branch_jump = is_compressed ? isbj16 : isbj32;
 
 
   // =============================================================================
