@@ -40,6 +40,7 @@ module phantom_core (
   // FETCH FRONT-END DIMENSIONS
   // ===========================================================================
     localparam integer FETCH_DEPTH = 4; // decoupled fetch FIFO entries
+    localparam integer PHT_IDX_W   = 9; // 512-entry bimodal direction predictor
   // ===========================================================================
   // FETCH FRONT-END DIMENSIONS
   // ===========================================================================
@@ -71,6 +72,7 @@ module phantom_core (
     logic [4:0]       if_id_rs2Index;   // extracted rs2 index
     logic [4:0]       if_id_rdIndex;    // extracted rd  index
     logic             if_id_valid;      // 1 => real instruction (not a bubble)
+    logic [1:0]       if_id_phtCounter; // bimodal PHT counter
 
     // ── ID/EX ────────────────────────────────────────────────────────────────
     logic [31:0]      id_ex_pc;         // PC value for ID's instruction
@@ -88,6 +90,7 @@ module phantom_core (
     logic             id_ex_isBranch;   // 1 => current instruction is a branch
     logic [2:0]       id_ex_branchType; // type of decoded branch
     logic             id_ex_predTaken;  // 1 => branch taken prediction
+    logic [1:0]       id_ex_phtOld;     // PHT counter read at predict time
 
     logic [4:0]       id_ex_rs1Index;
     /* verilator lint_off UNUSEDSIGNAL */
@@ -124,6 +127,8 @@ module phantom_core (
     logic [31:0]      ex_ma_targetAddr2;
     logic             ex_ma_branchTaken;
     logic             ex_ma_predTaken;  // prediction carried for MA verification
+    logic             ex_ma_isBranch;   // 1 => conditional branch
+    logic [1:0]       ex_ma_phtOld;     // PHT counter at predict time
 
     logic [31:0]      ex_ma_instr;
 
@@ -226,7 +231,7 @@ module phantom_core (
     // ── ID: imm_generator output ─────────────────────────────────────────────
     logic [31:0]      id_imm;
 
-    // ── ID: static branch predictor (BTFNT) ──────────────────────────────────
+    // ── ID: branch predictor (BTFNT) ─────────────────────────────────────────
     logic             pred_taken;       // 1 => predict branch/jump taken
     logic [31:0]      pred_target;      // predicted target
     logic             pred_redirect;    // ID-sourced predicted-taken redirect
@@ -343,6 +348,20 @@ module phantom_core (
       mret_en     ? csr_mepc  :
       branch_miss ? truepc    :
     pred_target;
+
+    pht #(
+      .PHT_IDX_W (PHT_IDX_W),
+      .INIT      (2'b10)
+    ) u_pht (
+      .clk        (clk),
+      .rd_en      (!redirect_en && !stall && !ex_busy && !dmem_stall && fe_valid),
+      .rd_idx     (fe_pc[PHT_IDX_W:1]),
+      .rd_counter (if_id_phtCounter),
+      .wr_en      (resetn && ex_ma_valid && ex_ma_isBranch && !dmem_stall),
+      .wr_idx     (ex_ma_pc[PHT_IDX_W:1]),
+      .wr_old     (ex_ma_phtOld),
+      .wr_taken   (ex_ma_branchTaken)
+    );
 
   // ===========================================================================
   // FETCH FRONT END
@@ -487,11 +506,11 @@ module phantom_core (
     assign ex_undo_en = id_ex_valid && id_ex_regWrite && (branch_miss || trap_en || mret_en);
     assign ma_wr_en   = ex_ma_valid && ex_ma_regWrite && !dmem_stall;
 
-    // ── Static branch predictor (BTFNT) ──────────────────────────────────────
+    // ── Branch predictor: bimodal PHT direction ──────────────────────────────
     assign pred_target = if_id_pc + id_imm;
     assign pred_taken  = if_id_valid && (
       (id_isJump   && !id_isJalr) ||
-      (id_isBranch && id_imm[31])
+      (id_isBranch && if_id_phtCounter[1])
     );
     assign pred_redirect = pred_taken && !stall && !ex_busy && !dmem_stall && !ma_redirect;
 
@@ -522,6 +541,7 @@ module phantom_core (
       id_ex_isBranch    <= (flush_id_ex || stall) ? 1'b0       : id_isBranch;
       id_ex_branchType  <= (flush_id_ex || stall) ? 3'b000     : id_branchType;
       id_ex_predTaken   <= (flush_id_ex || stall) ? 1'b0       : pred_taken;
+      id_ex_phtOld      <= (flush_id_ex || stall) ? 2'b01      : if_id_phtCounter;
 
       id_ex_rs1Index    <= (flush_id_ex || stall) ? 5'd0       : if_id_rs1Index;
       id_ex_rs2Index    <= (flush_id_ex || stall) ? 5'd0       : if_id_rs2Index;
@@ -671,6 +691,8 @@ module phantom_core (
       ex_ma_targetAddr2 <= (flush_ex_ma) ? 32'd0      : ex_targetAddr2;
       ex_ma_branchTaken <= (flush_ex_ma) ? 1'b0       : ex_branchTaken;
       ex_ma_predTaken   <= (flush_ex_ma) ? 1'b0       : id_ex_predTaken;
+      ex_ma_isBranch    <= (flush_ex_ma) ? 1'b0       : id_ex_isBranch;
+      ex_ma_phtOld      <= (flush_ex_ma) ? 2'b01      : id_ex_phtOld;
 
       ex_ma_instr       <= (flush_ex_ma) ? `NOP_INSTR : id_ex_instr;
  

@@ -48,6 +48,7 @@ SV_SOURCES = \
   $(CORE)/ma_stage/interrupt-unit.sv  \
   $(CORE)/ex_stage/muldiv-unit.sv     \
   $(CORE)/if_stage/fetch-unit.sv      \
+	$(CORE)/if_stage/pht.sv             \
   $(CORE)/phantom-core.sv             \
   $(SOC)/periph/uart-tx.sv            \
   $(SOC)/periph/clint.sv              \
