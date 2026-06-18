@@ -97,7 +97,9 @@ module soc (
  
 
   (* keep *) logic sdram_resetn;
-  always_ff @(posedge cpu_clk) sdram_resetn <= cpu_resetn;
+  always_ff @(posedge cpu_clk) sdram_resetn <= resetn_seq;
+  logic preload_done;   // 1 = load & read-back verify complete
+  logic verify_ok;      // 1 = SDRAM read-back matches the source
 
   // ===========================================================================
   // RESET SEQUENCER
@@ -124,7 +126,9 @@ module soc (
       end
     end
 
-    DCCA u_resetn_gbuf (.CLKI(resetn_seq), .CLKO(cpu_resetn), .CE(1'b1));
+    logic cpu_release;
+    always_ff @(posedge cpu_clk) cpu_release <= resetn_seq && preload_done && verify_ok;
+    DCCA u_resetn_gbuf (.CLKI(cpu_release), .CLKO(cpu_resetn), .CE(1'b1));
   // ===========================================================================
   // RESET SEQUENCER
   // ===========================================================================
@@ -146,7 +150,7 @@ module soc (
 
     // ── SDRAM memory bus (cpu <-> sdram_adapter) ─────────────────────────────
     logic [31:0] mem_addr, mem_wdata, mem_rdata;
-    logic        mem_req, mem_we, mem_ready;
+    logic        mem_req, mem_we, mem_burst, mem_rvalid, mem_ready;
     logic [3:0]  mem_be;
 
     cpu u_cpu (
@@ -163,9 +167,11 @@ module soc (
       .mem_addr     (mem_addr),
       .mem_req      (mem_req),
       .mem_we       (mem_we),
+      .mem_burst    (mem_burst),
       .mem_wdata    (mem_wdata),
       .mem_be       (mem_be),
       .mem_rdata    (mem_rdata),
+      .mem_rvalid   (mem_rvalid),
       .mem_ready    (mem_ready)
     );
   // ===========================================================================
@@ -186,7 +192,7 @@ module soc (
   // The SDRAM chip clock (sdram_clk) is the PLL's 180-deg CLKOS output.
   // ===========================================================================
     logic [23:0] u_addr;
-    logic        u_we, u_req, u_ready, u_rvalid, u_wstrobe;
+    logic        u_we, u_dbl, u_req, u_ready, u_rvalid, u_wstrobe;
     logic [15:0] u_rdata, u_wdata;
     logic [2:0]  u_wbeat;
     logic [1:0]  u_wdqm;
@@ -197,24 +203,49 @@ module soc (
     assign sdram_d = dq_oe ? dq_out : 16'bz;
     assign dq_in   = sdram_d;
 
+    // ── Boot preloader (BRAM payload -> SDRAM) + adapter mux ──────────────────
+    logic [31:0] ld_addr, ld_wdata;
+    logic        ld_req, ld_we, ld_active;
+    logic [3:0]  ld_be;
+
+    sdram_preloader #(
+      .INIT_FILE ("payload.hex"),
+      .N_WORDS   (64)
+    ) u_preload (
+      .clk(cpu_clk), .resetn(sdram_resetn),
+      .ld_addr(ld_addr), .ld_req(ld_req), .ld_we(ld_we),
+      .ld_wdata(ld_wdata), .ld_be(ld_be), .ld_rdata(mem_rdata), .ld_ready(mem_ready),
+      .active(ld_active), .done(preload_done), .verify_ok(verify_ok)
+    );
+
+    logic [31:0] a_addr, a_wdata;
+    logic        a_req, a_we, a_burst;
+    logic [3:0]  a_be;
+    assign a_addr  = ld_active ? ld_addr   : mem_addr;
+    assign a_req   = ld_active ? ld_req    : mem_req;
+    assign a_we    = ld_active ? ld_we     : mem_we;
+    assign a_burst = ld_active ? 1'b0      : mem_burst;
+    assign a_wdata = ld_active ? ld_wdata  : mem_wdata;
+    assign a_be    = ld_active ? ld_be     : mem_be;
+
     sdram_adapter u_adapter (
       .clk(cpu_clk), .resetn(sdram_resetn),
-      .cpu_addr(mem_addr), .cpu_req(mem_req), .cpu_we(mem_we),
-      .cpu_wdata(mem_wdata), .cpu_be(mem_be),
-      .cpu_rdata(mem_rdata), .cpu_ready(mem_ready),
-      .u_addr(u_addr), .u_we(u_we), .u_req(u_req), .u_ready(u_ready),
+      .cpu_addr(a_addr), .cpu_req(a_req), .cpu_we(a_we), .cpu_burst(a_burst),
+      .cpu_wdata(a_wdata), .cpu_be(a_be),
+      .cpu_rdata(mem_rdata), .cpu_rvalid(mem_rvalid), .cpu_ready(mem_ready),
+      .u_addr(u_addr), .u_we(u_we), .u_dbl(u_dbl), .u_req(u_req), .u_ready(u_ready),
       .u_rdata(u_rdata), .u_rvalid(u_rvalid),
       .u_wbeat(u_wbeat), .u_wstrobe(u_wstrobe), .u_wdata(u_wdata), .u_wdqm(u_wdqm)
     );
 
     sdram_ctrl #(
-      .BURST_LEN   (2),
+      .BURST_LEN   (8),
       .INIT_CYCLES (12000),
       .CAS_LATENCY (2),
       .REFRESH_CYC (420)
     ) u_sdram (
       .clk(cpu_clk), .resetn(sdram_resetn),
-      .u_addr(u_addr), .u_we(u_we), .u_req(u_req), .u_ready(u_ready),
+      .u_addr(u_addr), .u_we(u_we), .u_dbl(u_dbl), .u_req(u_req), .u_ready(u_ready),
       .u_rdata(u_rdata), .u_rvalid(u_rvalid),
       .u_wbeat(u_wbeat), .u_wstrobe(u_wstrobe), .u_wdata(u_wdata), .u_wdqm(u_wdqm),
       .sdram_cke(sdram_cke), .sdram_cs_n(sdram_csn), .sdram_ras_n(sdram_rasn),

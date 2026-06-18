@@ -26,6 +26,7 @@ module sdram_ctrl #(
   // ── User port ───────────────────────────────────────────────────────────────
   input  logic [23:0] u_addr,         // base word address of burst
   input  logic        u_we,           // 1 = write burst, 0 = read burst
+  input  logic        u_dbl,          // 1 = read TWO same-row BL bursts (1 ACT/PRE)
   input  logic        u_req,          // assert 1 cycle while u_ready is high
   output logic        u_ready,        // idle + init done
 
@@ -79,7 +80,7 @@ module sdram_ctrl #(
     S_INIT_WAIT, S_INIT_PRE, S_INIT_TRP, S_INIT_REF, S_INIT_TRFC,
     S_INIT_MODE, S_INIT_TMRD,
     S_IDLE, S_REF, S_REF_TRFC,
-    S_WLOAD, S_ACT, S_TRCD, S_WR, S_RD, S_RD_CAS, S_RD_DATA, S_RECOVER
+    S_WLOAD, S_ACT, S_TRCD, S_WR, S_RD, S_RD_CAS, S_RD_DATA, S_RD2, S_PRE, S_RECOVER
   } state_t;
 
   state_t      state;
@@ -94,6 +95,8 @@ module sdram_ctrl #(
   logic [12:0] req_row;
   logic [8:0]  req_col;
   logic        req_we;
+  logic        req_dbl;
+  logic        rphase;
 
   // Write data buffer (filled in S_WLOAD, streamed in S_WR)
   logic [15:0] wbuf   [0:BURST_LEN-1];
@@ -101,8 +104,12 @@ module sdram_ctrl #(
 
   localparam logic [BEAT_W:0] LAST_BEAT = (BEAT_W+1)'(BURST_LEN-1);
 
-  logic [12:0] col_addr;
-  assign col_addr  = {2'b00, 1'b1, 1'b0, req_col};
+  logic [12:0] col_addr;                              // A10=1 (auto-precharge, writes)
+  assign col_addr     = {2'b00, 1'b1, 1'b0, req_col};
+  logic [12:0] col_addr_rd;                           // A10=0 (manual precharge, reads)
+  assign col_addr_rd  = {2'b00, 1'b0, 1'b0, req_col};
+  logic [12:0] col_addr_rd2;                          // 2nd read burst: col+8 halfwords
+  assign col_addr_rd2 = {2'b00, 1'b0, 1'b0, req_col + 9'd8};
 
   assign u_ready   = (state == S_IDLE) && !refresh_due;
 
@@ -199,6 +206,7 @@ module sdram_ctrl #(
             req_row  <= u_addr[21:9];
             req_col  <= u_addr[8:0];
             req_we   <= u_we;
+            req_dbl  <= u_dbl && !u_we;
             state    <= u_we ? S_WLOAD : S_ACT;
           end
         end
@@ -228,6 +236,7 @@ module sdram_ctrl #(
           sdram_ba <= req_bank;
           sdram_a  <= req_row;
           wait_cnt <= T_RCD[15:0];
+          rphase   <= 1'b0;
           state    <= S_TRCD;
         end
         S_TRCD: begin
@@ -258,7 +267,7 @@ module sdram_ctrl #(
         S_RD: begin
           cmd      <= CMD_READ;
           sdram_ba <= req_bank;
-          sdram_a  <= col_addr;       // A10=1 auto-precharge
+          sdram_a  <= col_addr_rd;
           wait_cnt <= CAS_LATENCY[15:0] - 16'd1;
           beat     <= '0;
           state    <= S_RD_CAS;
@@ -271,10 +280,31 @@ module sdram_ctrl #(
           u_rdata  <= sdram_dq_in;
           u_rvalid <= 1'b1;
           if (beat == LAST_BEAT) begin
-            beat     <= '0;
-            wait_cnt <= T_RP[15:0];
-            state    <= S_RECOVER;
+            beat   <= '0;
+            if (req_dbl && !rphase) begin
+              rphase <= 1'b1;
+              state  <= S_RD2;
+            end else begin
+              wait_cnt <= T_RP[15:0];
+              state    <= S_PRE;
+            end
           end else beat <= beat + 1'b1;
+        end
+
+        S_RD2: begin
+          cmd      <= CMD_READ;
+          sdram_ba <= req_bank;
+          sdram_a  <= col_addr_rd2;
+          wait_cnt <= CAS_LATENCY[15:0] - 16'd1;
+          beat     <= '0;
+          state    <= S_RD_CAS;
+        end
+
+        S_PRE: begin
+          cmd      <= CMD_PRECHARGE;
+          sdram_a  <= 13'(1) << 10;
+          wait_cnt <= T_RP[15:0];
+          state    <= S_RECOVER;
         end
 
         S_RECOVER: begin

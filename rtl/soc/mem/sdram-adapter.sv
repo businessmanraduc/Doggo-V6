@@ -1,30 +1,37 @@
 // =============================================================================
-// PHANTOM-32  ──  SDRAM single-access adapter  (32-bit CPU  <->  16-bit burst)
+// PHANTOM-32  ──  SDRAM adapter  (32-bit CPU  <->  16-bit BL=8 burst)
 // =============================================================================
-// Turn one 32-bit CPU load/store into one 2-beat SDRAM burst
+// Turn a fixed 8-halfwords burst per Read/Write
 //
-// Read:  fetch both halves, present {hi, lo} and pulse cpu_ready on 2nd beat.
-// Write: split the word into two halves; sub-word stores (SB/SH) masked with
-//        the controller's per-beat dqm (dqm = ~byte-enable). cpu_ready held
-//        until the controller is fully idle.
+// Read:
+//    cpu_burst=0 (single-word data load):
+//        issue burst, present word0, pulse cpu_ready on that word.
+//    cpu_burst=1 (I-Cache line fill):
+//        stream all 4 words, one cpu_rvalid pulse per word, cpu_ready on 4th
+//        (last) word.
+// Write (single-word): burst still runs 8 beats; beats 0/1 carry the word with
+//        real dqm, beats 2..7 are masked.
 module sdram_adapter (
   input  logic        clk,
   input  logic        resetn,
 
-  // ── CPU side: one 32-bit access (only driven for the SDRAM region) ─────────
+  // ── CPU side ───────────────────────────────────────────────────────────────
   /* verilator lint_off UNUSEDSIGNAL */
   input  logic [31:0] cpu_addr,     // byte offset within SDRAM
   /* verilator lint_on  UNUSEDSIGNAL */
-  input  logic        cpu_req,      // load/store to SDRAM in MA this cycle
+  input  logic        cpu_req,      // access to SDRAM this cycle
   input  logic        cpu_we,       // 1 = store
+  input  logic        cpu_burst,    // 1 = 4-word read burst (I-Cache fill)
   input  logic [31:0] cpu_wdata,
   input  logic [3:0]  cpu_be,       // byte enables
-  output logic [31:0] cpu_rdata,    // assembled word (valid with cpu_ready)
+  output logic [31:0] cpu_rdata,    // current word (valid with cpu_rvalid/cpu_ready)
+  output logic        cpu_rvalid,   // burst: one pulse per returned word
   output logic        cpu_ready,    // 1 = access complete this cycle
 
-  // ── Controller side (sdram_ctrl, BURST_LEN = 2) ────────────────────────────
+  // ── Controller side (sdram_ctrl, BURST_LEN = 8) ────────────────────────────
   output logic [23:0] u_addr,
   output logic        u_we,
+  output logic        u_dbl,        // 1 = 2-burst (8-word) read for line fill
   output logic        u_req,
   input  logic        u_ready,
   input  logic [15:0] u_rdata,
@@ -42,25 +49,48 @@ module sdram_adapter (
 
   logic [31:0] wdata_q;     // latched store data
   logic [3:0]  be_q;        // latched byte enables
-  logic [15:0] rd_lo;       // captured low half of a read
-  logic        rbeat;       // read beat index
-  logic        wr_started;  // controller has gone busy
+  logic        burst_q;     // latched cpu_burst
+  logic [15:0] rd_lo;       // captured low half of the word in flight
+  logic [3:0]  rbeat;       // read beat index 0..15
+  logic        wr_started;  // controller has gone busy (write)
 
   // ── Combinational outputs ──────────────────────────────────────────────────
   always_comb begin
-    u_req     = 1'b0;
-    u_we      = cpu_we;
-    u_addr    = {cpu_addr[24:2], 1'b0};
-    cpu_ready = 1'b0;
-    cpu_rdata = {u_rdata, rd_lo};
+    u_req      = 1'b0;
+    u_we       = cpu_we;
+    u_dbl      = cpu_burst;
+    u_addr     = {cpu_addr[24:2], 1'b0};
+    cpu_ready  = 1'b0;
+    cpu_rvalid = 1'b0;
+    cpu_rdata  = {u_rdata, rd_lo};
 
-    u_wdata   = (u_wbeat[0] == 1'b0) ? wdata_q[15:0] : wdata_q[31:16];
-    u_wdqm    = (u_wbeat[0] == 1'b0) ? ~be_q[1:0]    : ~be_q[3:2];
+    u_wdata =
+      (u_wbeat == 3'd0) ? wdata_q[15:0]  :
+      (u_wbeat == 3'd1) ? wdata_q[31:16] :
+    16'd0;
+    u_wdqm  =
+      (u_wbeat == 3'd0) ? ~be_q[1:0]     :
+      (u_wbeat == 3'd1) ? ~be_q[3:2]     :
+    2'b11;
 
     case (astate)
-      A_IDLE: if (cpu_req    && u_ready)  u_req     = 1'b1; // kick off the burst
-      A_RD:   if (u_rvalid   && rbeat)    cpu_ready = 1'b1; // 2nd beat -> done
-      A_WR:   if (wr_started && u_ready)  cpu_ready = 1'b1; // controller idle -> done
+      A_IDLE: begin
+        if (cpu_req  && u_ready) // kick off the burst
+          u_req = 1'b1;
+      end
+
+      A_RD: begin
+        if (u_rvalid && rbeat[0])
+          cpu_rvalid = burst_q;
+        if (u_rvalid && (burst_q ? (rbeat == 4'd15) : (rbeat == 4'd1)))
+          cpu_ready = 1'b1;
+      end
+
+      A_WR: begin
+        if (wr_started && u_ready)
+          cpu_ready = 1'b1;
+      end
+
       default: ;
     endcase
   end
@@ -69,7 +99,7 @@ module sdram_adapter (
   always_ff @(posedge clk) begin
     if (!resetn) begin
       astate     <= A_IDLE;
-      rbeat      <= 1'b0;
+      rbeat      <= 4'd0;
       wr_started <= 1'b0;
     end else begin
       case (astate)
@@ -77,7 +107,8 @@ module sdram_adapter (
           if (cpu_req && u_ready) begin
             wdata_q    <= cpu_wdata;
             be_q       <= cpu_be;
-            rbeat      <= 1'b0;
+            burst_q    <= cpu_burst;
+            rbeat      <= 4'b0;
             wr_started <= 1'b0;
             astate     <= cpu_we ? A_WR : A_RD;
           end
@@ -85,8 +116,11 @@ module sdram_adapter (
 
         A_RD: begin
           if (u_rvalid) begin
-            if (!rbeat) begin rd_lo  <= u_rdata; rbeat <= 1'b1; end
-            else        begin astate <= A_IDLE;                 end
+            if (!rbeat[0])
+              rd_lo <= u_rdata;
+            if (burst_q ? (rbeat == 4'd15) : (rbeat == 4'd1))
+              astate <= A_IDLE;
+            rbeat <= rbeat + 4'd1;
           end
         end
 

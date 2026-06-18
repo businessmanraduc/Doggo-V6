@@ -28,11 +28,11 @@ module icache #(
   output logic [15:0] data_b,       // halfword @ PC+2
   output logic        ready,        // 1 = data valid (both ports hit)
 
-  // ── SDRAM word-fill master ─────────────────────────────────────────────────
-  output logic [31:0] fill_addr,    // word-aligned byte address
-  output logic        fill_req,     // request a 32-bit word read
-  input  logic [31:0] fill_rdata,   // returned word
-  input  logic        fill_ready    // 1 = fill_rdata valid this cycle
+  // ── SDRAM burst-fill master ────────────────────────────────────────────────
+  output logic [31:0] fill_addr,    // line-base byte address
+  output logic        fill_req,     // request line-fill burst
+  input  logic [31:0] fill_rdata,   // current burst word
+  input  logic        fill_rvalid   // 1 = fill_rdata has valid burst word
 );
 
   // ── Derived geometry ───────────────────────────────────────────────────────
@@ -99,9 +99,9 @@ module icache #(
   logic [WIL_W-1:0] fill_wcnt;
 
   assign ready = (state == S_CHECK) && hit_a && hit_b;
-  
+
   assign fill_req  = (state == S_FILL);
-  assign fill_addr = {{(32-ADDR_W){1'b0}}, fill_tag, fill_line, fill_wcnt, 2'b00};
+  assign fill_addr = {{(32-ADDR_W){1'b0}}, fill_tag, fill_line, {WIL_W{1'b0}}, 2'b00};
 
   always_ff @(posedge clk) begin
     if (!resetn) begin
@@ -128,7 +128,7 @@ module icache #(
         end
 
         S_FILL: begin
-          if (fill_ready) begin
+          if (fill_rvalid) begin
             data_a_ram[{fill_line, fill_wcnt}] <= fill_rdata;
             data_b_ram[{fill_line, fill_wcnt}] <= fill_rdata;
             if (fill_wcnt == WIL_W'(LINE_WORDS-1)) begin

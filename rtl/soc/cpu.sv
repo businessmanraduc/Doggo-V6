@@ -55,9 +55,11 @@ module cpu (
   output logic [31:0] mem_addr,     // MA byte address (ex_ma_dmemAddr)
   output logic        mem_req,      // 1 = SDRAM load/store in MA this cycle
   output logic        mem_we,       // 1 = store
+  output logic        mem_burst,    // 1 = 4-word read burst
   output logic [31:0] mem_wdata,    // store data (byte-lane shifted)
   output logic [3:0]  mem_be,       // byte enables
-  input  logic [31:0] mem_rdata,    // assembled load word (valid with mem_ready)
+  input  logic [31:0] mem_rdata,    // load/burst word (valid with mem_rvalid/mem_ready)
+  input  logic        mem_rvalid,   // 1 = mem_rdata is a valid burst word
   input  logic        mem_ready     // 1 = SDRAM access complete this cycle
 );
 
@@ -81,7 +83,7 @@ module cpu (
     logic [31:0] fill_addr;
     logic        fill_req;
     logic [31:0] fill_rdata;
-    logic        fill_ready;
+    logic        fill_rvalid;
 
     // ── DMEM ─────────────────────────────────────────────────────────────────
     // dmem_rd_addr bits [31:12] and [1:0] are not forwarded to the BSRAM address
@@ -161,20 +163,20 @@ module cpu (
   // ===========================================================================
     icache #(
       .LINES      (512),
-      .LINE_BYTES (16),
+      .LINE_BYTES (32),
       .ADDR_W     (25)
     ) u_icache (
-      .clk        (clk),
-      .resetn     (resetn),
-      .addr_a     (imem_addr_a),
-      .addr_b     (imem_addr_b),
-      .data_a     (imem_data_a),
-      .data_b     (imem_data_b),
-      .ready      (imem_ready),
-      .fill_addr  (fill_addr),
-      .fill_req   (fill_req),
-      .fill_rdata (fill_rdata),
-      .fill_ready (fill_ready)
+      .clk         (clk),
+      .resetn      (resetn),
+      .addr_a      (imem_addr_a),
+      .addr_b      (imem_addr_b),
+      .data_a      (imem_data_a),
+      .data_b      (imem_data_b),
+      .ready       (imem_ready),
+      .fill_addr   (fill_addr),
+      .fill_req    (fill_req),
+      .fill_rdata  (fill_rdata),
+      .fill_rvalid (fill_rvalid)
     );
   // ===========================================================================
   // I-CACHE
@@ -209,11 +211,12 @@ module cpu (
     assign mem_req   = arb_locked && (arb_fill ? fill_req : d_req);
     assign mem_addr  = arb_fill ? fill_addr : dmem_wr_addr;
     assign mem_we    = arb_fill ? 1'b0      : dmem_we;
+    assign mem_burst = arb_fill;
     assign mem_wdata = dmem_wdata;                      // I-Cache fill is read-only
     assign mem_be    = arb_fill ? 4'hF      : dmem_be;
 
     assign sdram_d_ready = arb_locked && !arb_fill && mem_ready;
-    assign fill_ready    = arb_locked &&  arb_fill && mem_ready;
+    assign fill_rvalid   = arb_locked &&  arb_fill && mem_rvalid;
     assign fill_rdata    = mem_rdata;
 
   // ===========================================================================

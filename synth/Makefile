@@ -17,7 +17,7 @@
 # PROGRAM: path to the .S source to load into IMEM.
 # =============================================================================
 
-PROGRAM ?= ../programs/firstFPGAProgram.S
+PROGRAM ?= ../programs/sdramCounter.S
 
 # ── Toolchain ─────────────────────────────────────────────────────────────────
 GCC      = riscv32-none-elf-gcc
@@ -54,6 +54,7 @@ SV_SOURCES = \
   $(SOC)/periph/clint.sv              \
   $(SOC)/mem/sdram-ctrl.sv            \
 	$(SOC)/mem/sdram-adapter.sv         \
+	$(SOC)/mem/sdram-preloader.sv       \
 	$(SOC)/mem/icache.sv                \
 	$(SOC)/cpu.sv                       \
   $(SOC)/soc.sv
@@ -64,13 +65,13 @@ PACKAGE  = --package CABGA381
 LPF      = ulx3s_v20.lpf
 
 # ── Output artefacts ──────────────────────────────────────────────────────────
-PROG_ELF   = program.elf
-IMEM_HEX   = imem.hex
-SYNTH_JSON = soc.json
-SYNTH_CFG  = soc.config
-BITSTREAM  = soc.bit
-DIAG_LOG   = soc.timing.log
-DIAG_CFG   = soc.diag.config
+PROG_ELF    = program.elf
+PAYLOAD_HEX = payload.hex
+SYNTH_JSON  = soc.json
+SYNTH_CFG   = soc.config
+BITSTREAM   = soc.bit
+DIAG_LOG    = soc.timing.log
+DIAG_CFG    = soc.diag.config
 
 # ── Seed sweep settings ───────────────────────────────────────────────────────
 SWEEP_SEEDS ?= 25
@@ -81,22 +82,22 @@ SEED        ?=
 # TARGETS
 # =============================================================================
 
-.PHONY: all imem synth pnr diagnostic benchmark prog flash clean
+.PHONY: all payload synth pnr diagnostic benchmark prog flash clean
 
 all: $(BITSTREAM)
 
-# ── Step 1: Compile .S → imem.hex (16-bit halfword Verilog hex) ───────────────
-imem: $(IMEM_HEX)
+# ── Step 1: Compile payload .S → imem.hex (32-bit Verilog hex) ───────────────
+payload: $(PAYLOAD_HEX)
 
-$(IMEM_HEX): $(PROGRAM)
+$(PAYLOAD_HEX): $(PROGRAM)
 	$(GCC) $(GCC_FLAGS) -o $(PROG_ELF) $<
-	$(OBJCOPY) -O verilog --verilog-data-width 2 $(PROG_ELF) $(IMEM_HEX)
-	@echo "Generated $(IMEM_HEX) from $<"
+	$(OBJCOPY) -O verilog --verilog-data-width 4 $(PROG_ELF) $(PAYLOAD_HEX)
+	@echo "Generated $(PAYLOAD_HEX) from $<"
 
 # ── Step 2: Yosys synthesis ───────────────────────────────────────────────────
 synth: $(SYNTH_JSON)
 
-synth.ys: $(SV_SOURCES) $(IMEM_HEX)
+synth.ys: $(SV_SOURCES) $(PAYLOAD_HEX)
 	@echo "read_verilog -sv -I$(CORE) -I$(SOC) $(SV_SOURCES)" >  synth.ys
 	@echo "synth_ecp5 -top soc -json $(SYNTH_JSON)"           >> synth.ys
 
@@ -146,7 +147,7 @@ flash: $(BITSTREAM)
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 clean:
-	rm -f $(PROG_ELF) $(IMEM_HEX) $(SYNTH_JSON) $(SYNTH_CFG) $(BITSTREAM) \
+	rm -f $(PROG_ELF) $(PAYLOAD_HEX) $(SYNTH_JSON) $(SYNTH_CFG) $(BITSTREAM) \
         $(DIAG_LOG) $(DIAG_CFG) synth.ys
 	rm -rf sweep_tmp
 
