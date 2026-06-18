@@ -1,16 +1,13 @@
 // =============================================================================
 // PHANTOM-32  ──  Instruction Cache  (direct-mapped, dual fetch port)
 // =============================================================================
-// Dual-serve at PC and PC+2, filling missed lines from SDRAM behind 32-bit
-// word fill master
+// Serves one 32-bit word per lookup; halfwords are split in fabric. (addr_b is
+// kept for interface compatibility but is no longer used for addressing.)
 //
-// Cache Geometry: 8KB, direct-mapped, 16-byte lines, 512 lines.
-//    byte addr | tag[24:13] | index[12:4] | word-in-line[3:2] | hw[1] | [0]
+// Cache Geometry: direct-mapped, parameterised. With LINES=512, LINE_BYTES=32:
+//    byte addr | tag[24:14] | index[13:5] | word-in-line[4:2] | hw[1] | b[0]
 //
-// Dual fetch port: data + tag arrays are duplicated so both halfwords read in
-// one cycle with simple single-port BRAM inference. A 32-bit instruction that
-// straddles a line boundary makes copy B miss on the next line; the fill FSM
-// brings whichever line(s) miss.
+// Fill: a missed line is brought in from SDRAM as burst
 module icache #(
   parameter int LINES       = 512,  // direct-mapped lines
   parameter int LINE_BYTES  = 16,   // bytes per line
@@ -21,12 +18,12 @@ module icache #(
 
   // ── Core fetch ports ───────────────────────────────────────────────────────
   /* verilator lint_off UNUSEDSIGNAL */
-  input  logic [31:0] addr_a,       // PC   (next_pc)
-  input  logic [31:0] addr_b,       // PC+2 (next_pc2)
+  input  logic [31:0] addr_a,       // word-aligned PC
+  input  logic [31:0] addr_b,       // PC+2
   /* verilator lint_on  UNUSEDSIGNAL */
-  output logic [15:0] data_a,       // halfword @ PC
-  output logic [15:0] data_b,       // halfword @ PC+2
-  output logic        ready,        // 1 = data valid (both ports hit)
+  output logic [15:0] data_a,       // halfword @ PC   = word[15:0]
+  output logic [15:0] data_b,       // halfword @ PC+2 = word[31:16]
+  output logic        ready,        // 1 = data valid (hit)
 
   // ── SDRAM burst-fill master ────────────────────────────────────────────────
   output logic [31:0] fill_addr,    // line-base byte address
@@ -44,51 +41,17 @@ module icache #(
   localparam int OFF_W      = $clog2(LINE_BYTES);
   localparam int TAG_W      = ADDR_W - OFF_W - IDX_W;
 
-  // ── Address field extractors ───────────────────────────────────────────────
-  logic [WORDIDX_W-1:0] wordidx_a,  wordidx_b;
-  logic [IDX_W-1:0]     idx_a,      idx_b;
-  logic [TAG_W-1:0]     tag_a,      tag_b;
-  logic                 hwsel_a,    hwsel_b;
+  // ── Address field extractors (lookup uses addr_a only) ──────────────────────
+  logic [WORDIDX_W-1:0] wordidx;
+  logic [IDX_W-1:0]     idx;
+  logic [TAG_W-1:0]     tag;
+  assign wordidx = addr_a[2 +: WORDIDX_W];
+  assign idx     = addr_a[OFF_W +: IDX_W];
+  assign tag     = addr_a[OFF_W+IDX_W +: TAG_W];
 
-  assign wordidx_a = addr_a[2 +: WORDIDX_W];
-  assign wordidx_b = addr_b[2 +: WORDIDX_W];
-  assign idx_a     = addr_a[OFF_W +: IDX_W];
-  assign idx_b     = addr_b[OFF_W +: IDX_W];
-  assign tag_a     = addr_a[OFF_W+IDX_W +: TAG_W];
-  assign tag_b     = addr_b[OFF_W+IDX_W +: TAG_W];
-  assign hwsel_a   = addr_a[1];
-  assign hwsel_b   = addr_b[1];
-
-  // ── Storage: dup 32-bit data RAMs + tag RAMs, shared valid FF array ────────
-  (* ram_style = "block" *) logic [31:0]    data_a_ram [0:WORDS-1];
-  (* ram_style = "block" *) logic [31:0]    data_b_ram [0:WORDS-1];
-  (* ram_style = "block" *) logic [TAG_W:0] tag_a_ram  [0:LINES-1];
-  (* ram_style = "block" *) logic [TAG_W:0] tag_b_ram  [0:LINES-1];
-
-  // ── 1-cycle registered lookup ──────────────────────────────────────────────
-  logic [31:0]      word_a_q,   word_b_q;   // data RAM outputs
-  logic [TAG_W:0]   tagrd_a_q,  tagrd_b_q;  // tag  RAM outputs
-  logic [TAG_W-1:0] tagcmp_a_q, tagcmp_b_q; // tag to compare
-  logic [IDX_W-1:0] idx_a_q,    idx_b_q;    // index of the looked-up line
-  logic             hwsel_a_q,  hwsel_b_q;
-
-  always_ff @(posedge clk) begin
-    word_a_q   <= data_a_ram[wordidx_a];
-    word_b_q   <= data_b_ram[wordidx_b];
-    tagrd_a_q  <= tag_a_ram[idx_a];
-    tagrd_b_q  <= tag_b_ram[idx_b];
-    tagcmp_a_q <= tag_a;
-    tagcmp_b_q <= tag_b;
-    idx_a_q    <= idx_a;
-    idx_b_q    <= idx_b;
-    hwsel_a_q  <= hwsel_a;
-    hwsel_b_q  <= hwsel_b;
-  end
-
-  logic hit_a; assign hit_a = tagrd_a_q[TAG_W] && (tagrd_a_q[TAG_W-1:0] == tagcmp_a_q);
-  logic hit_b; assign hit_b = tagrd_b_q[TAG_W] && (tagrd_b_q[TAG_W-1:0] == tagcmp_b_q);
-  assign data_a = hwsel_a_q ? word_a_q[31:16] : word_a_q[15:0];
-  assign data_b = hwsel_b_q ? word_b_q[31:16] : word_b_q[15:0];
+  // ── Storage: one 32-bit data RAM + one tag RAM (valid bit in MSB) ───────────
+  (* ram_style = "block" *) logic [31:0]    data_ram [0:WORDS-1];
+  (* ram_style = "block" *) logic [TAG_W:0] tag_ram  [0:LINES-1];
 
   // ── Miss-fill FSM ───────────────────────────────────────────────────────────
   typedef enum logic[1:0] { S_CLEAR, S_CHECK, S_FILL, S_WAIT } state_t;
@@ -98,8 +61,50 @@ module icache #(
   logic [TAG_W-1:0] fill_tag;
   logic [WIL_W-1:0] fill_wcnt;
 
-  assign ready = (state == S_CHECK) && hit_a && hit_b;
+  // ── Combinational write-port controls ───────────────────────────────────────
+  logic                 dwe;  // data write enable
+  logic [WORDIDX_W-1:0] dwa;  // data write address
+  logic                 twe;  // tag  write enable
+  logic [IDX_W-1:0]     twa;  // tag  write address
+  logic [TAG_W:0]       twd;  // tag  write data {valid, tag}
+  always_comb begin
+    dwe = (state == S_FILL) && fill_rvalid;
+    dwa = {fill_line, fill_wcnt};
+    twe = 1'b0;
+    twa = clear_cnt;
+    twd = '0;
+    if (state == S_CLEAR) begin
+      twe = 1'b1; twa = clear_cnt; twd = '0;                 // invalidate at boot
+    end else if ((state == S_FILL) && fill_rvalid &&
+                 (fill_wcnt == WIL_W'(LINE_WORDS-1))) begin
+      twe = 1'b1; twa = fill_line; twd = {1'b1, fill_tag};   // validate filled line
+    end
+  end
 
+  // ── Dedicated 1-cycle registered lookup + write ─────────────────────────────
+  logic [31:0]    word_q;
+  logic [TAG_W:0] tagrd_q;
+  always_ff @(posedge clk) begin
+    if (dwe) data_ram[dwa] <= fill_rdata;
+    word_q <= data_ram[wordidx];
+  end
+  always_ff @(posedge clk) begin
+    if (twe) tag_ram[twa] <= twd;
+    tagrd_q <= tag_ram[idx];
+  end
+
+  logic [TAG_W-1:0] tagcmp_q;
+  logic [IDX_W-1:0] idx_q;
+  always_ff @(posedge clk) begin
+    tagcmp_q <= tag;
+    idx_q    <= idx;
+  end
+
+  logic hit; assign hit = tagrd_q[TAG_W] && (tagrd_q[TAG_W-1:0] == tagcmp_q);
+  assign data_a = word_q[15:0];
+  assign data_b = word_q[31:16];
+
+  assign ready     = (state == S_CHECK) && hit;
   assign fill_req  = (state == S_FILL);
   assign fill_addr = {{(32-ADDR_W){1'b0}}, fill_tag, fill_line, {WIL_W{1'b0}}, 2'b00};
 
@@ -111,33 +116,21 @@ module icache #(
     end else begin
       case (state)
         S_CLEAR: begin
-          tag_a_ram[clear_cnt] <= '0;
-          tag_b_ram[clear_cnt] <= '0;
           if (clear_cnt == IDX_W'(LINES-1)) state <= S_CHECK;
           clear_cnt <= clear_cnt + 1'b1;
         end
 
         S_CHECK: begin
-          if (!hit_a) begin
-            fill_line <= idx_a_q; fill_tag <= tagcmp_a_q; fill_wcnt <= '0;
-            state     <= S_FILL;
-          end else if (!hit_b) begin
-            fill_line <= idx_b_q; fill_tag <= tagcmp_b_q; fill_wcnt <= '0;
+          if (!hit) begin
+            fill_line <= idx_q; fill_tag <= tagcmp_q; fill_wcnt <= '0;
             state     <= S_FILL;
           end
         end
 
         S_FILL: begin
           if (fill_rvalid) begin
-            data_a_ram[{fill_line, fill_wcnt}] <= fill_rdata;
-            data_b_ram[{fill_line, fill_wcnt}] <= fill_rdata;
-            if (fill_wcnt == WIL_W'(LINE_WORDS-1)) begin
-              tag_a_ram[fill_line] <= {1'b1, fill_tag};
-              tag_b_ram[fill_line] <= {1'b1, fill_tag};
-              state                <= S_WAIT;
-            end else begin
-              fill_wcnt <= fill_wcnt + 1'b1;
-            end
+            if (fill_wcnt == WIL_W'(LINE_WORDS-1)) state <= S_WAIT;
+            else                                   fill_wcnt <= fill_wcnt + 1'b1;
           end
         end
 

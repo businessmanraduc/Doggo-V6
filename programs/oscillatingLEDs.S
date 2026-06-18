@@ -1,5 +1,5 @@
 .section .text
-.global _start
+.globl _start
 
 _start:
   li    s0, 0x80003000
