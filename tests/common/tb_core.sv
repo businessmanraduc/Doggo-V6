@@ -6,12 +6,12 @@ module tb_core #(
   input logic clk,
   input logic resetn
 );
-  logic [31:0] imem_addr_a, imem_addr_b, dmem_rdata, dmem_wdata;
+  logic [31:0] imem_addr, dmem_rdata, dmem_wdata;
   /* verilator lint_off UNUSEDSIGNAL */
   logic [31:0] dmem_raddr;
   logic [31:0] dmem_waddr;
   /* verilator lint_on UNUSEDSIGNAL */
-  logic [15:0] imem_data_a, imem_data_b;
+  logic [31:0] imem_data;
   logic [3:0]  dmem_be;
   logic        dmem_we;
   /* verilator lint_off UNUSEDSIGNAL */
@@ -30,10 +30,8 @@ module tb_core #(
   phantom_core dut (
     .clk     (clk),
     .resetn  (resetn),
-    .imem_addr_a (imem_addr_a),
-    .imem_addr_b (imem_addr_b),
-    .imem_data_a (imem_data_a),
-    .imem_data_b (imem_data_b),
+    .imem_addr   (imem_addr),
+    .imem_data   (imem_data),
     .imem_ready  (imem_ready),
     .dmem_raddr  (dmem_raddr),
     .dmem_waddr  (dmem_waddr),
@@ -49,8 +47,10 @@ module tb_core #(
   );
 
   always_ff @(posedge clk) begin
-    imem_data_a <= {mem[imem_addr_a + 1], mem[imem_addr_a]};
-    imem_data_b <= {mem[imem_addr_b + 1], mem[imem_addr_b]};
+    imem_data <= {
+      mem[imem_addr + 3], mem[imem_addr + 2],
+      mem[imem_addr + 1], mem[imem_addr]
+    };
   end
 
   // ── Fetch-ready model ──────────────────────────────────────────────────────

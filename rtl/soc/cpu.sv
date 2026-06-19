@@ -1,14 +1,14 @@
 `include "soc_map.vh"
 // =============================================================================
-// PHANTOM-32  ──  CPU  (Core + IMEM/DMEM BSRAMs + Peripheral Bus)
+// PHANTOM-32  ──  CPU  (Core + I-Cache + DMEM BSRAM + Peripheral Bus)
 // =============================================================================
-// Wraps phantom_core with behavioral BSRAM models that Yosys infers into ECP5
-// EBR blocks, and exposes a peripheral bus for soc.sv to attach peripherals.
+// Wraps phantom_core with the I-Cache (instructions served from SDRAM behind a
+// direct-mapped BRAM cache), a behavioral DMEM BSRAM model that Yosys infers
+// into ECP5 EBR, and a peripheral bus for soc.sv to attach peripherals.
 //
-//   IMEM: two independent 16-bit × 4096 arrays, one per read port.
-//         Splitting avoids the Yosys same-clock dual-port DP16KD inference
-//         limitation. Each array infers as 4 × DP16KD = 8 blocks total.
-//         Initialized from imem.hex (16-bit halfword hex, see programs/).
+//   IMEM: The core fetches a 32-bit instruction word per cycle from the
+//         I-Cache (u_icache), which fills missed lines from SDRAM. One fetch
+//         address, one word back (1-cycle hit latency).
 //
 //   DMEM: one 32-bit × 1024 array with byte-enable write granularity.
 //         Infers as PDPW16KD (pseudo dual-port: one write, one read port).
@@ -67,16 +67,9 @@ module cpu (
   // INTERNAL MEMORY BUS SIGNALS
   // ===========================================================================
 
-    // ── IMEM ─────────────────────────────────────────────────────────────────
-    // Only bits [12:1] reach the DPB address port. Bit [0] is the halfword offset
-    // (IMEM is halfword-addressed); bits [31:13] are above the 8 KB IMEM window.
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic [31:0] imem_addr_a;   // Port A address (next_pc,  combinational from IF)
-    logic [31:0] imem_addr_b;   // Port B address (next_pc2, combinational from IF)
-    /* verilator lint_on  UNUSEDSIGNAL */
-    logic [15:0] imem_data_a;   // Port A read data (valid 1 cycle after address)
-    logic [15:0] imem_data_b;   // Port B read data
-    // Fetch-ready handshake to the core.
+    // ── Instruction Fetch (core <-> I-Cache) ─────────────────────────────────
+    logic [31:0] imem_addr;     // fetch address (word-aligned)
+    logic [31:0] imem_data;     // instruction word
     logic        imem_ready;    // driven by the I-Cache
 
     // ── I-Cache SDRAM fill master ────────────────────────────────────────────
@@ -135,10 +128,8 @@ module cpu (
       .clk          (clk),
       .resetn       (resetn),
       // ── IMEM ───────────────────────────────────────────────────────────────
-      .imem_addr_a  (imem_addr_a),
-      .imem_addr_b  (imem_addr_b),
-      .imem_data_a  (imem_data_a),
-      .imem_data_b  (imem_data_b),
+      .imem_addr    (imem_addr),
+      .imem_data    (imem_data),
       .imem_ready   (imem_ready),
       // ── DMEM ───────────────────────────────────────────────────────────────
       .dmem_raddr   (dmem_rd_addr),
@@ -168,10 +159,8 @@ module cpu (
     ) u_icache (
       .clk         (clk),
       .resetn      (resetn),
-      .addr_a      (imem_addr_a),
-      .addr_b      (imem_addr_b),
-      .data_a      (imem_data_a),
-      .data_b      (imem_data_b),
+      .addr        (imem_addr),
+      .data        (imem_data),
       .ready       (imem_ready),
       .fill_addr   (fill_addr),
       .fill_req    (fill_req),

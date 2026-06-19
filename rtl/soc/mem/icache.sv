@@ -1,8 +1,7 @@
 // =============================================================================
 // PHANTOM-32  ──  Instruction Cache  (direct-mapped, dual fetch port)
 // =============================================================================
-// Serves one 32-bit word per lookup; halfwords are split in fabric. (addr_b is
-// kept for interface compatibility but is no longer used for addressing.)
+// Serves one 32-bit word per lookup;
 //
 // Cache Geometry: direct-mapped, parameterised. With LINES=512, LINE_BYTES=32:
 //    byte addr | tag[24:14] | index[13:5] | word-in-line[4:2] | hw[1] | b[0]
@@ -18,11 +17,9 @@ module icache #(
 
   // ── Core fetch ports ───────────────────────────────────────────────────────
   /* verilator lint_off UNUSEDSIGNAL */
-  input  logic [31:0] addr_a,       // word-aligned PC
-  input  logic [31:0] addr_b,       // PC+2
+  input  logic [31:0] addr,         // word-aligned fetch address
   /* verilator lint_on  UNUSEDSIGNAL */
-  output logic [15:0] data_a,       // halfword @ PC   = word[15:0]
-  output logic [15:0] data_b,       // halfword @ PC+2 = word[31:16]
+  output logic [31:0] data,         // instruction word @ addr
   output logic        ready,        // 1 = data valid (hit)
 
   // ── SDRAM burst-fill master ────────────────────────────────────────────────
@@ -45,9 +42,9 @@ module icache #(
   logic [WORDIDX_W-1:0] wordidx;
   logic [IDX_W-1:0]     idx;
   logic [TAG_W-1:0]     tag;
-  assign wordidx = addr_a[2 +: WORDIDX_W];
-  assign idx     = addr_a[OFF_W +: IDX_W];
-  assign tag     = addr_a[OFF_W+IDX_W +: TAG_W];
+  assign wordidx = addr[2 +: WORDIDX_W];
+  assign idx     = addr[OFF_W +: IDX_W];
+  assign tag     = addr[OFF_W+IDX_W +: TAG_W];
 
   // ── Storage: one 32-bit data RAM + one tag RAM (valid bit in MSB) ───────────
   (* ram_style = "block" *) logic [31:0]    data_ram [0:WORDS-1];
@@ -101,8 +98,7 @@ module icache #(
   end
 
   logic hit; assign hit = tagrd_q[TAG_W] && (tagrd_q[TAG_W-1:0] == tagcmp_q);
-  assign data_a = word_q[15:0];
-  assign data_b = word_q[31:16];
+  assign data = word_q;
 
   assign ready     = (state == S_CHECK) && hit;
   assign fill_req  = (state == S_FILL);

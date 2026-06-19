@@ -14,10 +14,8 @@ module phantom_core (
   input logic         resetn,         // active-low synchronous reset
 
   // ── Instruction memory ─────────────────────────────────────────────────────
-  output logic [31:0] imem_addr_a,    // fetch address: NextPC
-  output logic [31:0] imem_addr_b,    // fetch address: NextPC_2
-  input  logic [15:0] imem_data_a,    // halfword at PC
-  input  logic [15:0] imem_data_b,    // halfword at PC_2
+  output logic [31:0] imem_addr,      // fetch address: word-aligned
+  input  logic [31:0] imem_data,      // instrWord at imem_addr
   input  logic        imem_ready,     // 1 = imem_data valid for fetching
 
   // ── Data memory ────────────────────────────────────────────────────────────
@@ -310,10 +308,8 @@ module phantom_core (
       .redirect_en (redirect_en),
       .redirect_pc (redirect_pc),
       .consume     (fe_consume),
-      .imem_addr_a (imem_addr_a),
-      .imem_addr_b (imem_addr_b),
-      .imem_data_a (imem_data_a),
-      .imem_data_b (imem_data_b),
+      .imem_addr   (imem_addr),
+      .imem_data   (imem_data),
       .imem_ready  (imem_ready),
       .instr       (fe_instr),
       .pc          (fe_pc),

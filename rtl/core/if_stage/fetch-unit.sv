@@ -23,10 +23,8 @@ module fetch_unit #(
   input  logic        consume,      // 1 = ID accepted the head instruction
 
   // ── I-Cache port ───────────────────────────────────────────────────────────
-  output logic [31:0] imem_addr_a,  // req_pc
-  output logic [31:0] imem_addr_b,  // req_pc + 2
-  input  logic [15:0] imem_data_a,
-  input  logic [15:0] imem_data_b,
+  output logic [31:0] imem_addr,    // req_pc
+  input  logic [31:0] imem_data,    // instruction word @ imem_addr
   input  logic        imem_ready,   // 1 = word valid (I-Cache hit)
 
   // ── Aligned instruction stream out (to ID) ─────────────────────────────────
@@ -50,7 +48,7 @@ module fetch_unit #(
   logic [IW-1:0] head, tail;
   logic [IW:0]   count;
 
-  logic [31:0] respWord;   assign respWord   = {imem_data_b, imem_data_a};
+  logic [31:0] respWord;   assign respWord   = imem_data;
   logic        resultHit;  assign resultHit  = inFlight  &&  imem_ready && !redirect_en;
   logic        resultMiss; assign resultMiss = inFlight  && !imem_ready && !redirect_en;
   logic        pushResp;   assign pushResp   = resultHit && (count < (IW+1)'(DEPTH)); 
@@ -62,8 +60,7 @@ module fetch_unit #(
     && (occupancyNext < (IW+1)'(DEPTH))
     && (resultHit || !inFlight);
 
-  assign imem_addr_a = stalling ? flight_pc : fetch_pc;
-  assign imem_addr_b = imem_addr_a + 32'd2;
+  assign imem_addr = stalling ? flight_pc : fetch_pc;
 
 
   // ===========================================================================
