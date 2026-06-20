@@ -140,6 +140,7 @@ module cpu (
       .dmem_rdata   (dmem_rdata),
       .dmem_req     (dmem_req),
       .dmem_ready   (addr_is_sdram ? sdram_d_ready : 1'b1),
+      .dmem_multi   (addr_is_sdram),
       .irq_timer    (irq_timer),
       .irq_soft     (irq_soft),
       .irq_ext      (irq_ext)

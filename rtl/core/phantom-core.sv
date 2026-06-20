@@ -27,8 +27,9 @@ module phantom_core (
   input  logic [31:0] dmem_rdata,     // load data (full 32-bit word)
   output logic        dmem_req,       // 1 = MA holds a load/store
   input  logic        dmem_ready,     // 1 = memAccess complete this cycle
+  input  logic        dmem_multi,     // 1 = using registered-completion handshake
 
-  // ── Interrupt request lines (level-sensitive, drive mip) ─────────────────────
+  // ── Interrupt request lines (level-sensitive, drive mip) ───────────────────
   input  logic        irq_timer,      // machine timer    interrupt (CLINT mtip)
   input  logic        irq_soft,       // machine software interrupt (CLINT msip)
   input  logic        irq_ext         // machine external interrupt (PLIC/ext)
@@ -173,6 +174,9 @@ module phantom_core (
     logic             stall;            // load-use stall
     logic             mem_access;       // MA instr is a load/store
     logic             dmem_stall;       // MA memory access not yet complete
+    logic             mem_busy;         // multi-cycle SDRAM access
+    logic             mem_done;         // 1 = access complete (resume cycle)
+    logic [31:0]      dmem_rdata_q;     // latched load word
     logic             branch_miss;      // taken branch/jump resolved in MA
     logic             trap_en;
     logic             mret_en;
@@ -732,8 +736,25 @@ module phantom_core (
 
     // ── Multi-cycle memory stall ─────────────────────────────────────────────
     assign mem_access = ex_ma_valid && (ex_ma_memRead || ex_ma_memWrite);
-    assign dmem_req   = mem_access  && !sync_trap;
-    assign dmem_stall  = resetn && dmem_req && !dmem_ready;
+    assign dmem_req   = mem_access  && !sync_trap && !mem_done;
+
+    wire   mem_launch = dmem_req && dmem_multi && !mem_busy && !mem_done;
+    always_ff @(posedge clk) begin
+      if (!resetn) begin
+        mem_busy <= 1'b0;
+        mem_done <= 1'b0;
+      end else begin
+        mem_done <= 1'b0;
+        if (!mem_busy) begin
+          if (mem_launch) mem_busy <= 1'b1;
+        end else if (dmem_ready) begin
+          mem_busy     <= 1'b0;
+          mem_done     <= 1'b1;
+          dmem_rdata_q <= dmem_rdata;
+        end
+      end
+    end
+    assign dmem_stall  = mem_launch || mem_busy;
 
     // ── Branch Miss Detection ────────────────────────────────────────────────
     assign branch_miss   = !trap_en && !mret_en && (ex_ma_branchTaken != ex_ma_predTaken);
@@ -756,27 +777,28 @@ module phantom_core (
     assign csr_wrEnable = ex_ma_csrEnable && ex_ma_csrLegal;
 
     // ── DMEM load extraction ─────────────────────────────────────────────────
+    wire [31:0] load_src = mem_done ? dmem_rdata_q : dmem_rdata;
     always_comb begin
       unique case ({ex_ma_memWidth, ex_ma_dmemAddr[1:0]})
-        // ── LB  (signed byte) ────────────────────────────────────────────────
-        {`WIDTH_B,  2'b00}: load_data = {{24{dmem_rdata[7]}},  dmem_rdata[7:0]};
-        {`WIDTH_B,  2'b01}: load_data = {{24{dmem_rdata[15]}}, dmem_rdata[15:8]};
-        {`WIDTH_B,  2'b10}: load_data = {{24{dmem_rdata[23]}}, dmem_rdata[23:16]};
-        {`WIDTH_B,  2'b11}: load_data = {{24{dmem_rdata[31]}}, dmem_rdata[31:24]};
+         // ── LB  (signed byte) ────────────────────────────────────────────────
+        {`WIDTH_B,  2'b00}: load_data = {{24{load_src[7]}},  load_src[7:0]};
+        {`WIDTH_B,  2'b01}: load_data = {{24{load_src[15]}}, load_src[15:8]};
+        {`WIDTH_B,  2'b10}: load_data = {{24{load_src[23]}}, load_src[23:16]};
+        {`WIDTH_B,  2'b11}: load_data = {{24{load_src[31]}}, load_src[31:24]};
         // ── LBU (unsigned byte) ──────────────────────────────────────────────
-        {`WIDTH_BU, 2'b00}: load_data = {24'd0, dmem_rdata[7:0]};
-        {`WIDTH_BU, 2'b01}: load_data = {24'd0, dmem_rdata[15:8]};
-        {`WIDTH_BU, 2'b10}: load_data = {24'd0, dmem_rdata[23:16]};
-        {`WIDTH_BU, 2'b11}: load_data = {24'd0, dmem_rdata[31:24]};
+        {`WIDTH_BU, 2'b00}: load_data = {24'd0, load_src[7:0]};
+        {`WIDTH_BU, 2'b01}: load_data = {24'd0, load_src[15:8]};
+        {`WIDTH_BU, 2'b10}: load_data = {24'd0, load_src[23:16]};
+        {`WIDTH_BU, 2'b11}: load_data = {24'd0, load_src[31:24]};
         // ── LH  (signed halfword) ────────────────────────────────────────────
-        {`WIDTH_H,  2'b00}: load_data = {{16{dmem_rdata[15]}}, dmem_rdata[15:0]};
-        {`WIDTH_H,  2'b10}: load_data = {{16{dmem_rdata[31]}}, dmem_rdata[31:16]};
+        {`WIDTH_H,  2'b00}: load_data = {{16{load_src[15]}}, load_src[15:0]};
+        {`WIDTH_H,  2'b10}: load_data = {{16{load_src[31]}}, load_src[31:16]};
         // ── LHU (unsigned halfword) ──────────────────────────────────────────
-        {`WIDTH_HU, 2'b00}: load_data = {16'd0, dmem_rdata[15:0]};
-        {`WIDTH_HU, 2'b10}: load_data = {16'd0, dmem_rdata[31:16]};
+        {`WIDTH_HU, 2'b00}: load_data = {16'd0, load_src[15:0]};
+        {`WIDTH_HU, 2'b10}: load_data = {16'd0, load_src[31:16]};
         // ── LW  (word) ───────────────────────────────────────────────────────
-        {`WIDTH_W,  2'b00}: load_data = dmem_rdata;
-        default:            load_data = dmem_rdata;
+        {`WIDTH_W,  2'b00}: load_data = load_src;
+        default:            load_data = load_src;
       endcase
     end
  

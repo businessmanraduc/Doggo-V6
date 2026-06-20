@@ -41,6 +41,7 @@ module tb_core #(
     .dmem_rdata  (dmem_rdata),
     .dmem_req    (dmem_req),
     .dmem_ready  (1'b1),
+    .dmem_multi  (1'b0),
     .irq_timer   (1'b0),
     .irq_soft    (1'b0),
     .irq_ext     (1'b0)
