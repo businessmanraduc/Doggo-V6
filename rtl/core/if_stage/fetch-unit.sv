@@ -56,8 +56,10 @@ module fetch_unit #(
 
   logic [IW:0] occupancyNext; // issue only if current cycle push/pop leaves free slot
   assign occupancyNext = count + (pushResp ? (IW+1)'(1) : '0) - (pop ? (IW+1)'(1) : '0);
-  logic can_issue; assign can_issue = !redirect_en && !stalling && !resultMiss
-    && (occupancyNext < (IW+1)'(DEPTH))
+
+  logic [IW:0] issueRoom; assign issueRoom = count + (pushResp ? (IW+1)'(1) : '0);
+  logic can_issue; assign can_issue = !stalling && !resultMiss
+    && (issueRoom < (IW+1)'(DEPTH))
     && (resultHit || !inFlight);
 
   assign imem_addr = stalling ? flight_pc : fetch_pc;

@@ -38,7 +38,7 @@ module phantom_core (
   // ===========================================================================
   // FETCH FRONT-END DIMENSIONS
   // ===========================================================================
-    localparam integer FETCH_DEPTH = 4; // decoupled fetch FIFO entries
+    localparam integer FETCH_DEPTH = 8; // decoupled fetch FIFO entries
     localparam integer PHT_IDX_W   = 9; // 512-entry bimodal direction predictor
   // ===========================================================================
   // FETCH FRONT-END DIMENSIONS

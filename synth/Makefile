@@ -64,6 +64,9 @@ DEVICE   = --85k
 PACKAGE  = --package CABGA381
 LPF      = ulx3s_v20.lpf
 
+# ── Placer tuning ─────────────────────────────────────────────────────────────
+PLACER_OPTS = --placer-heap-timingweight 90
+
 # ── Output artefacts ──────────────────────────────────────────────────────────
 PROG_ELF    = program.elf
 PAYLOAD_HEX = payload.hex
@@ -112,14 +115,20 @@ $(BITSTREAM): $(SYNTH_JSON) $(LPF)
 	           --json $(SYNTH_JSON)         \
 	           --lpf  $(LPF)                \
 	           $(if $(SEED),--seed $(SEED)) \
+             $(PLACER_OPTS)               \
              --timing-allow-fail          \
              --textcfg $(SYNTH_CFG)
 	$(ECPPACK) $(SYNTH_CFG) $(BITSTREAM)
 
 diagnostic: $(SYNTH_JSON) $(LPF)
 	@echo "Running synthesis + place-and-route timing analysis..."
-	@$(NEXTPNR) $(DEVICE) $(PACKAGE) --json $(SYNTH_JSON) --lpf $(LPF) \
-              --timing-allow-fail --textcfg $(DIAG_CFG) > $(DIAG_LOG) 2>&1 || true
+	@$(NEXTPNR) $(DEVICE) $(PACKAGE)        \
+	           --json $(SYNTH_JSON)         \
+	           --lpf $(LPF)                 \
+             $(if $(SEED),--seed $(SEED)) \
+             $(PLACER_OPTS)               \
+             --timing-allow-fail          \
+             --textcfg $(DIAG_CFG) > $(DIAG_LOG) 2>&1 || true
 	@echo ""
 	@python3 critpath.py $(DIAG_LOG)
 	@echo ""
@@ -129,7 +138,7 @@ benchmark: $(SYNTH_JSON) $(LPF)
 	@echo "Sweeping seeds 1..$(SWEEP_SEEDS) on $(SWEEP_JOBS) parallel jobs ($(SWEEP_SEEDS) place-and-route passes)..."
 	@rm -rf sweep_tmp && mkdir -p sweep_tmp
 	@seq 1 $(SWEEP_SEEDS) | xargs -P $(SWEEP_JOBS) -I {} \
-	  ./sweep.sh {} $(NEXTPNR) $(DEVICE) $(PACKAGE) --json $(SYNTH_JSON) --lpf $(LPF) \
+	  ./sweep.sh {} $(NEXTPNR) $(DEVICE) $(PACKAGE) --json $(SYNTH_JSON) --lpf $(LPF) $(PLACER_OPTS) \
 	  > sweep_tmp/results.txt
 	@echo ""
 	@echo "=== Fmax by seed (best first) ==="

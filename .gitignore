@@ -6,6 +6,7 @@ sim_icarus
 tests/*
 !tests/common
 !tests/compliance
+!tests/pipeline
 tests/compliance/build
 synth/sweep_tmp
 synth/soc.json
