@@ -469,11 +469,11 @@ module phantom_core (
       .rs1_ready      (rs1_ready),
       .rs2_ready      (rs2_ready),
       .id_wrEnable    (id_wrEnable),
-      .id_wr_index    (if_id_rdIndex),
+      .id_wrIndex    (if_id_rdIndex),
       .ma_wrEnable    (ma_wrEnable),
-      .ma_wr_index    (ex_ma_rdIndex),
+      .ma_wrIndex    (ex_ma_rdIndex),
       .ex_undoEnable  (ex_undoEnable),
-      .ex_undo_index  (id_ex_rdIndex)
+      .ex_undoIndex  (id_ex_rdIndex)
     );
  
     assign stall         = if_id_valid && (!rs1_ready || !rs2_ready);
