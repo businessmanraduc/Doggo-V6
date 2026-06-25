@@ -50,7 +50,7 @@ SV_SOURCES = \
   $(CORE)/if_stage/fetch-unit.sv      \
 	$(CORE)/if_stage/pht.sv             \
   $(CORE)/phantom-core.sv             \
-  $(SOC)/periph/uart-tx.sv            \
+  $(SOC)/periph/uart.sv               \
   $(SOC)/periph/clint.sv              \
   $(SOC)/mem/sdram-ctrl.sv            \
 	$(SOC)/mem/sdram-adapter.sv         \

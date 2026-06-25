@@ -19,8 +19,8 @@
 `define SOC_SDRAM_BASE          32'h4000_0000   // 32 MB external SDRAM window
 
 // ── Peripheral base addresses ─────────────────────────────────────────────────
-`define SOC_UART_TX_ADDR        32'h8000_2000   // UART TX data register (write byte)
-`define SOC_UART_STATUS_ADDR    32'h8000_2004   // UART status (read): bit 0 = tx_busy
+`define SOC_UART_DATA_ADDR      32'h8000_2000   // UART data: write = TX byte, read = RX byte
+`define SOC_UART_STATUS_ADDR    32'h8000_2004   // UART status register (read-only)
 `define SOC_CLINT_SEL_HI        16'h8001        // CLINT occupies 0x8001_xxxx (64 KB)
 `define SOC_ONBOARD_LEDS        32'h8000_3000   // onboard LEDs (0 to 7)
 

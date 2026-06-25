@@ -18,6 +18,7 @@ module soc (
   input  logic       clk_25,   // 25 MHz board crystal oscillator (ULX3S)
   input  logic       resetn,   // active-low board reset button
   output logic       uart_tx,  // UART serial output pin (115200 8-N-1)
+  input  logic       uart_rx,  // UART serial input  pin (host -> FPGA)
   output logic [7:0] led,      // 8 onboard LEDs
 
   // ── External SDR SDRAM (W9825G6KH, 32 MB, 16-bit) ──────────────────────────
@@ -140,6 +141,7 @@ module soc (
     logic [31:0] periph_addr;
     logic [31:0] periph_wdata;
     logic        periph_we;
+    logic        periph_re;
     logic [3:0]  periph_be;
     logic [31:0] periph_rdata;
 
@@ -162,6 +164,7 @@ module soc (
       .periph_addr  (periph_addr),
       .periph_wdata (periph_wdata),
       .periph_we    (periph_we),
+      .periph_re    (periph_re),
       .periph_be    (periph_be),
       .periph_rdata (periph_rdata),
       .mem_addr     (mem_addr),
@@ -210,7 +213,7 @@ module soc (
 
     sdram_preloader #(
       .INIT_FILE ("payload.hex"),
-      .N_WORDS   (64)
+      .N_WORDS   (512)
     ) u_preload (
       .clk(cpu_clk), .resetn(sdram_resetn),
       .ld_addr(ld_addr), .ld_req(ld_req), .ld_we(ld_we),
@@ -262,22 +265,39 @@ module soc (
   // PERIPHERAL ADDRESS DECODE
   // ===========================================================================
 
-    // ── UART TX  @  0x8000_2000  ─────────────────────────────────────────────
-    logic       uart_tx_valid;
-    logic [7:0] uart_tx_byte;
+    // ── UART  @  0x8000_2000 (data) / 0x8000_2004 (status) ───────────────────
+    logic        uart_dataSel, uart_statusSel;
+    logic        uart_txWrite, uart_rxRead;
+    logic [7:0]  uart_txByte, uart_rxData;
+    logic [31:0] uart_statusWord;
+
+    assign uart_dataSel   = (periph_addr == `SOC_UART_DATA_ADDR);
+    assign uart_statusSel = (periph_addr == `SOC_UART_STATUS_ADDR);
+    assign uart_txWrite   = periph_we && uart_dataSel;
+    assign uart_rxRead    = periph_re && uart_dataSel;
 
     always_comb begin
-      uart_tx_valid = 1'b0;
-      uart_tx_byte  = 8'd0;
-      if (periph_we && (periph_addr == `SOC_UART_TX_ADDR)) begin
-        uart_tx_valid = 1'b1;
-        // Route the lowest active byte lane to the UART shift register.
-        if      (periph_be[0]) uart_tx_byte = periph_wdata[7:0];
-        else if (periph_be[1]) uart_tx_byte = periph_wdata[15:8];
-        else if (periph_be[2]) uart_tx_byte = periph_wdata[23:16];
-        else if (periph_be[3]) uart_tx_byte = periph_wdata[31:24];
-      end
+      uart_txByte = periph_wdata[7:0];
+      if      (periph_be[0]) uart_txByte = periph_wdata[7:0];
+      else if (periph_be[1]) uart_txByte = periph_wdata[15:8];
+      else if (periph_be[2]) uart_txByte = periph_wdata[23:16];
+      else if (periph_be[3]) uart_txByte = periph_wdata[31:24];
     end
+
+    uart #(
+      .CLKS_PER_BIT (`SOC_UART_CLKS_PER_BIT),
+      .FIFO_DEPTH   (16)
+    ) u_uart (
+      .clk        (cpu_clk),
+      .resetn     (cpu_resetn),
+      .tx_write   (uart_txWrite),
+      .tx_data    (uart_txByte),
+      .rx_read    (uart_rxRead),
+      .rx_data    (uart_rxData),
+      .status     (uart_statusWord),
+      .uart_tx    (uart_tx),
+      .uart_rx    (uart_rx)
+    );
 
     // ── CLINT  @  0x8001_0000  (64 KB region, SiFive-standard offsets) ───────
     assign clint_sel = (periph_addr[31:16] == `SOC_CLINT_SEL_HI);
@@ -298,41 +318,16 @@ module soc (
       .msip    (clint_msip)
     );
 
-    logic uart_status_sel;
-    assign uart_status_sel = (periph_addr == `SOC_UART_STATUS_ADDR);
-
     // ── Peripheral read data mux ─────────────────────────────────────────────
     always_comb begin
-      if (clint_sel)            periph_rdata = clint_rdata;
-      else if (uart_status_sel) periph_rdata = {31'b0, uart_tx_busy};
+      if      (clint_sel)       periph_rdata = clint_rdata;
+      else if (uart_dataSel)    periph_rdata = {24'd0, uart_rxData};
+      else if (uart_statusSel)  periph_rdata = uart_statusWord;
       else                      periph_rdata = 32'h00000000;
     end
 
   // ===========================================================================
   // PERIPHERAL ADDRESS DECODE
-  // ===========================================================================
-
-
-  // ===========================================================================
-  // UART TX  ──  115200 8-N-1 transmitter
-  // ===========================================================================
-  // CLKS_PER_BIT = round(cpu_clk / 115200).
-  // At 50.0 MHz: 50_000_000 / 115_200 ≈ 434.
-  // ===========================================================================
-    logic uart_tx_busy;
-
-    uart_tx #(
-      .CLKS_PER_BIT (`SOC_UART_CLKS_PER_BIT)
-    ) u_uart_tx (
-      .clk      (cpu_clk),
-      .resetn   (cpu_resetn),
-      .tx_byte  (uart_tx_byte),
-      .tx_valid (uart_tx_valid),
-      .tx_out   (uart_tx),
-      .tx_busy  (uart_tx_busy)
-    );
-  // ===========================================================================
-  // UART TX
   // ===========================================================================
 
 

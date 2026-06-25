@@ -41,10 +41,11 @@ module muldiv_unit (
   // ── FSM states ─────────────────────────────────────────────────────────────
   localparam logic [2:0]
     S_IDLE = 3'd0,              // waiting for M instruction
-    S_MUL1 = 3'd1,              // multiply stage 1
-    S_MUL2 = 3'd2,              // multiply stage 2
-    S_ITER = 3'd3,              // divide:   shift-subtract iteration
-    S_DONE = 3'd4;              // divide:   result ready this cycle
+    S_MUL1 = 3'd1,              // multiply: DSP partial products
+    S_MUL2 = 3'd2,              // multiply: shift-add
+    S_MUL3 = 3'd3,              // multiply: result ready this cycle
+    S_ITER = 3'd4,              // divide:   shift-subtract iteration
+    S_DONE = 3'd5;              // divide:   result ready this cycle
   logic [2:0] state;
 
   // ── Latched operands / op ─────────────────────────────────────────────────
@@ -71,21 +72,36 @@ module muldiv_unit (
   // MULTIPLIER  (combinational, from latched operands)
   // ===========================================================================
 
-    logic a_is_signed; assign a_is_signed = (r_opcode[1:0] == 2'b01) || (r_opcode[1:0] == 2'b10);
-    logic b_is_signed; assign b_is_signed = (r_opcode[1:0] == 2'b01);
+    logic a_isSigned; assign a_isSigned = (r_opcode[1:0] == 2'b01) || (r_opcode[1:0] == 2'b10);
+    logic b_isSigned; assign b_isSigned = (r_opcode[1:0] == 2'b01);
 
-    logic signed [32:0] a_ext;   assign a_ext = signed'({a_is_signed & r_a[31], r_a});
-    logic signed [32:0] b_ext;   assign b_ext = signed'({b_is_signed & r_b[31], r_b});
+    logic signed [32:0] a_ext;   assign a_ext = signed'({a_isSigned & r_a[31], r_a});
+    logic signed [32:0] b_ext;   assign b_ext = signed'({b_isSigned & r_b[31], r_b});
+
+    logic signed [17:0] a_lo;    assign a_lo = $signed({1'b0, a_ext[16:0]});
+    logic signed [17:0] b_lo;    assign b_lo = $signed({1'b0, b_ext[16:0]});
+    logic signed [17:0] a_hi;    assign a_hi = {{2{a_ext[32]}}, a_ext[32:17]};
+    logic signed [17:0] b_hi;    assign b_hi = {{2{b_ext[32]}}, b_ext[32:17]};
+
+    logic signed [35:0] pp_lolo; assign pp_lolo = a_lo * b_lo;
+    logic signed [35:0] pp_lohi; assign pp_lohi = a_lo * b_hi;
+    logic signed [35:0] pp_hilo; assign pp_hilo = a_hi * b_lo;
+    logic signed [35:0] pp_hihi; assign pp_hihi = a_hi * b_hi;
+    logic signed [35:0] r_lolo, r_lohi, r_hilo, r_hihi;
 
     /* verilator lint_off UNUSEDSIGNAL */
-    logic signed [65:0] product; assign product = a_ext * b_ext;
+    logic signed [65:0] product; assign product = (
+      (66'(r_hihi)          <<< 34) +
+      (66'(r_lohi + r_hilo) <<< 17) +
+      (66'(r_lolo))
+    );
     /* verilator lint_on  UNUSEDSIGNAL */
 
-    logic [63:0] product_q;
+    logic [63:0] r_product;
     logic [31:0] mul_result;
     assign mul_result = (r_opcode[1:0] == 2'b00)
-      ? product_q[31:0]           // MUL
-      : product_q[63:32];         // MULH
+      ? r_product[31:0]           // MUL
+      : r_product[63:32];         // MULH
 
   // ===========================================================================
   // MULTIPLIER
@@ -96,18 +112,18 @@ module muldiv_unit (
   // DIVIDER START-CYCLE HELPERS  (combinational, from the live inputs a/b/opcode)
   // ===========================================================================
 
-    logic        in_div_signed; assign in_div_signed = opcode[2] & ~opcode[0];
-    logic        in_sign_a;     assign in_sign_a = in_div_signed & a[31];
-    logic        in_sign_b;     assign in_sign_b = in_div_signed & b[31];
-    logic [31:0] in_mag_a;      assign in_mag_a  = in_sign_a ? (~a + 32'd1) : a;
-    logic [31:0] in_mag_b;      assign in_mag_b  = in_sign_b ? (~b + 32'd1) : b;
-    logic        in_b_zero;     assign in_b_zero = (b == 32'd0);
-    logic        in_a_intmin;   assign in_a_intmin = (a == 32'h8000_0000);
-    logic        in_b_neg1;     assign in_b_neg1   = (b == 32'hFFFF_FFFF);
-    logic        in_overflow;   assign in_overflow = in_div_signed & in_a_intmin & in_b_neg1;
+    logic        in_divSigned;  assign in_divSigned = opcode[2] & ~opcode[0];
+    logic        in_aSign;      assign in_aSign = in_divSigned & a[31];
+    logic        in_bSign;      assign in_bSign = in_divSigned & b[31];
+    logic [31:0] in_aMag;       assign in_aMag  = in_aSign ? (~a + 32'd1) : a;
+    logic [31:0] in_bMag;       assign in_bMag  = in_bSign ? (~b + 32'd1) : b;
+    logic        in_bZero;      assign in_bZero = (b == 32'd0);
+    logic        in_aIntmin;    assign in_aIntmin  = (a == 32'h8000_0000);
+    logic        in_bNeg1;      assign in_bNeg1    = (b == 32'hFFFF_FFFF);
+    logic        in_overflow;   assign in_overflow = in_divSigned & in_aIntmin & in_bNeg1;
 
-    logic [31:0] in_special_res;
-    assign in_special_res = in_b_zero
+    logic [31:0] in_specialRes;
+    assign in_specialRes = in_bZero
       ? (opcode[1] ? a     : 32'hFFFF_FFFF)
       : (opcode[1] ? 32'd0 : 32'h8000_0000);
 
@@ -147,28 +163,37 @@ module muldiv_unit (
                 state  <= S_MUL1;
               end else begin
                 want_rem       <= opcode[1];
-                quot_sign      <= in_sign_a ^ in_sign_b;
-                rem_sign       <= in_sign_a;
-                is_specialCase <= in_b_zero | in_overflow;
-                special_res    <= in_special_res;
-                divP  <= in_mag_a;
-                divC  <= in_mag_b;
+                quot_sign      <= in_aSign ^ in_bSign;
+                rem_sign       <= in_aSign;
+                is_specialCase <= in_bZero | in_overflow;
+                special_res    <= in_specialRes;
+                divP  <= in_aMag;
+                divC  <= in_bMag;
                 rem   <= 33'd0;
                 quot  <= 32'd0;
                 cnt   <= 5'd0;
-                state <= (in_b_zero | in_overflow) ? S_DONE : S_ITER;
+                state <= (in_bZero | in_overflow) ? S_DONE : S_ITER;
               end
             end
           end
 
-          // ── Multiply - 2 Stage compute + output ──────────────────────────────
+          // ── Multiply - 3 Stage: DSP partials -> fabric sum -> output ──────
           S_MUL1: begin
-            product_q <= product[63:0];
-            state     <= S_MUL2;
+            r_lolo <= pp_lolo;
+            r_lohi <= pp_lohi;
+            r_hilo <= pp_hilo;
+            r_hihi <= pp_hihi; // :3
+            state  <= S_MUL2;
           end
-          S_MUL2: if (consume) state <= S_IDLE;
 
-          // ── One quotient bit per cycle ───────────────────────────────────────
+          S_MUL2: begin
+            r_product <= product[63:0];
+            state     <= S_MUL3;
+          end
+
+          S_MUL3: if (consume) state <= S_IDLE;
+
+          // ── One quotient bit per cycle ────────────────────────────────────
           S_ITER: begin
             rem  <= sub_ge ? (rem_shift - {1'b0, divC}) : rem_shift;
             quot <= {quot[30:0], sub_ge};
@@ -195,11 +220,11 @@ module muldiv_unit (
   // OUTPUTS
   // ===========================================================================
 
-    assign done = (state == S_MUL2) || (state == S_DONE);
+    assign done = (state == S_MUL3) || (state == S_DONE);
 
     always_comb begin
       case (state)
-        S_MUL2:  result = mul_result;
+        S_MUL3:  result = mul_result;
         S_DONE:  result = div_result;
         default: result = 32'hDEADBEEF;
       endcase
