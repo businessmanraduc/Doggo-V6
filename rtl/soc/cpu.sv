@@ -57,8 +57,8 @@ module cpu (
 
     // ── Core data port ───────────────────────────────────────────────────────
     /* verilator lint_off UNUSEDSIGNAL */
-    logic [31:0] dmem_rdAddr;  // EX read address (ex_dmemAddr,   unused)
-    logic [31:0] dmem_wrAddr;  // MA address (ex_ma_dmemAddr, decode + SDRAM/periph access)
+    logic [31:0] dmem_raddr;  // EX read address (ex_dmemAddr,   unused)
+    logic [31:0] dmem_waddr;  // MA address (ex_ma_dmemAddr, decode + SDRAM/periph access)
     /* verilator lint_on  UNUSEDSIGNAL */
     logic [31:0] dmem_wdata;    // Write data
     logic [31:0] dmem_rdata;    // Read data
@@ -70,11 +70,11 @@ module cpu (
     // ── Address decode ───────────────────────────────────────────────────────
     logic  addr_isPeriph;
     logic  addr_isSDRAM;
-    assign addr_isPeriph = dmem_wrAddr[`SOC_PERIPH_SEL_BIT];
+    assign addr_isPeriph = dmem_waddr[`SOC_PERIPH_SEL_BIT];
     assign addr_isSDRAM  = !addr_isPeriph;
 
     // ── Peripheral bus outputs ───────────────────────────────────────────────
-    assign periph_addr  = dmem_wrAddr;
+    assign periph_addr  = dmem_waddr;
     assign periph_wdata = dmem_wdata;
     assign periph_we    = dmem_we && addr_isPeriph;
     assign periph_re    = dmem_req && !dmem_we && addr_isPeriph;
@@ -100,15 +100,15 @@ module cpu (
       .imem_data  (imem_data),
       .imem_ready (imem_ready),
       // ── DMEM ───────────────────────────────────────────────────────────────
-      .dmem_raddr (dmem_rdAddr),
-      .dmem_waddr (dmem_wrAddr),
+      .dmem_raddr (dmem_raddr),
+      .dmem_waddr (dmem_waddr),
       .dmem_we    (dmem_we),
       .dmem_be    (dmem_be),
       .dmem_wdata (dmem_wdata),
       .dmem_rdata (dmem_rdata),
       .dmem_req   (dmem_req),
       .dmem_ready (addr_isPeriph ? 1'b1 : sdram_dReady),
-      .dmem_multi (addr_isSDRAM),
+      .dmem_multi (!dmem_raddr[`SOC_PERIPH_SEL_BIT]),
       .irq_timer  (irq_timer),
       .irq_soft   (irq_soft),
       .irq_ext    (irq_ext)
@@ -163,7 +163,7 @@ module cpu (
     end
 
     assign mem_req   = arb_locked && (arb_fill ? icache_fillReq : d_req);
-    assign mem_addr  = arb_fill ? icache_fillAddr : dmem_wrAddr;
+    assign mem_addr  = arb_fill ? icache_fillAddr : dmem_waddr;
     assign mem_we    = arb_fill ? 1'b0      : dmem_we;
     assign mem_burst = arb_fill;
     assign mem_wdata = dmem_wdata;                      // I-Cache fill is read-only

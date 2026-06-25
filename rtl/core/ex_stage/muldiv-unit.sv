@@ -161,6 +161,7 @@ module muldiv_unit (
           S_ITER: if (cnt == 5'd31) state <= S_DONE;
           S_DONE: if (consume)      state <= S_IDLE;
           default:                  state <= S_IDLE;
+        endcase
       end
     end
 
