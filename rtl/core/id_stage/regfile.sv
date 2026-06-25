@@ -40,13 +40,13 @@ module regfile (
   output logic        rs2_ready,      // 1 = rd_index_b is available/valid
 
   // ── Scoreboard Write Ports ─────────────────────────────────────────────────
-  input  logic        id_wr_en,       // 1 = instruction in ID will write a reg
+  input  logic        id_wrEnable,       // 1 = instruction in ID will write a reg
   input  logic [4:0]  id_wr_index,    // its destination register
-  input  logic        ma_wr_en,       // 1 = instruction in MA will write a reg
+  input  logic        ma_wrEnable,       // 1 = instruction in MA will write a reg
   input  logic [4:0]  ma_wr_index,    // its destination register
 
   // ── Scoreboard Flush-Undo Port ─────────────────────────────────────────────
-  input  logic        ex_undo_en,     // 1 = a squashed EX writer to be undone
+  input  logic        ex_undoEnable,     // 1 = a squashed EX writer to be undone
   input  logic [4:0]  ex_undo_index   // its destination register
 );
 
@@ -120,9 +120,9 @@ module regfile (
       end else begin
         for (int i = 1; i < 32; i++) begin              // i = 0 is x0
           cnt[i] <= cnt[i]
-            + 2'((id_wr_en   && (id_wr_index   == 5'(i))))
-            - 2'((ma_wr_en   && (ma_wr_index   == 5'(i))))
-            - 2'((ex_undo_en && (ex_undo_index == 5'(i))));
+            + 2'((id_wrEnable   && (id_wr_index   == 5'(i))))
+            - 2'((ma_wrEnable   && (ma_wr_index   == 5'(i))))
+            - 2'((ex_undoEnable && (ex_undo_index == 5'(i))));
         end
       end
     end

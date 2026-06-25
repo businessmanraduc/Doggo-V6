@@ -57,7 +57,7 @@ module cpu (
 
     // ── Core data port ───────────────────────────────────────────────────────
     /* verilator lint_off UNUSEDSIGNAL */
-    logic [31:0] dmem_rdAddr;  // EX read address (ex_dmem_addr,   unused)
+    logic [31:0] dmem_rdAddr;  // EX read address (ex_dmemAddr,   unused)
     logic [31:0] dmem_wrAddr;  // MA address (ex_ma_dmemAddr, decode + SDRAM/periph access)
     /* verilator lint_on  UNUSEDSIGNAL */
     logic [31:0] dmem_wdata;    // Write data

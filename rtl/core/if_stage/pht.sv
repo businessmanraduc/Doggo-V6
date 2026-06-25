@@ -33,7 +33,7 @@ module pht #(
   input  logic                  wr_taken    // actual branch outcome
 );
 
-  (* ram_style = "block" *) logic [1:0] mem [0:(1 << PHT_IDX_W)-1];
+  (* ram_style = "distributed" *) logic [1:0] mem [0:(1 << PHT_IDX_W)-1];
 
   initial begin
     for (int i = 0; i < (1 << PHT_IDX_W); i++) mem[i] = INIT;

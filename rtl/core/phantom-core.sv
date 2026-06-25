@@ -128,6 +128,7 @@ module phantom_core (
     logic [31:0]      ex_ma_rs2Fwd;     // forwarded rs2 value
     logic [31:0]      ex_ma_aluResult;
     logic [31:0]      ex_ma_dmemAddr;   // DMEM byte address (rs1_fwd + imm)
+    logic             ex_ma_dmemMulti;  // 1 = MA access uses multi-cycle handshake
 
     logic             ex_ma_memRead;
     logic             ex_ma_memWrite;
@@ -227,9 +228,9 @@ module phantom_core (
     // ── Scoreboard control ───────────────────────────────────────────────────
     logic             rs1_ready;        // ID rs1 operand available
     logic             rs2_ready;        // ID rs2 operand available
-    logic             id_wr_en;         // ID writer reserves rd   (counter +1)
-    logic             ma_wr_en;         // MA writer leaves for WB (counter -1)
-    logic             ex_undo_en;       // squashed EX writer undo (counter -1)
+    logic             id_wrEnable;      // ID writer reserves rd   (counter +1)
+    logic             ma_wrEnable;      // MA writer leaves for WB (counter -1)
+    logic             ex_undoEnable;    // squashed EX writer undo (counter -1)
 
     // ── EX: branch_eval + branch_target outputs ──────────────────────────────
     logic [31:0]      ex_linkAddr;
@@ -247,7 +248,7 @@ module phantom_core (
     logic [31:0]      alu_lhs;
     logic [31:0]      alu_rhs;
     logic [31:0]      alu_result;
-    logic [31:0]      ex_dmem_addr;
+    logic [31:0]      ex_dmemAddr;
     logic [31:0]      muldiv_result;
     logic             muldiv_done;      // 1 = muldiv result valid
     logic             muldiv_active;    // 1 = muldiv instruction inside EX
@@ -377,7 +378,7 @@ module phantom_core (
   // ===========================================================================
 
     always_ff @(posedge clk) begin
-      if (!resetn || redirect_en) begin                 // flush -> bubble
+      if (!resetn || ma_redirect) begin                 // flush -> bubble
         if_id_pc       <= 32'd0;
         if_id_pc2      <= 32'd0;
         if_id_pc4      <= 32'd0;
@@ -388,7 +389,7 @@ module phantom_core (
         if_id_rdIndex  <= 5'd0;
         if_id_valid    <= 1'b0;
       end else if (!stall && !ex_busy && !dmem_stall) begin
-        if (fe_valid) begin                             // advance
+        if (fe_valid && !pred_taken) begin              // advance
           if_id_pc       <= fe_pc;
           if_id_pc2      <= fe_pc + 32'd2;
           if_id_pc4      <= fe_pc + 32'd4;
@@ -467,18 +468,18 @@ module phantom_core (
       .wr_en          (ma_wb_regWrite),
       .rs1_ready      (rs1_ready),
       .rs2_ready      (rs2_ready),
-      .id_wr_en       (id_wr_en),
+      .id_wrEnable    (id_wrEnable),
       .id_wr_index    (if_id_rdIndex),
-      .ma_wr_en       (ma_wr_en),
+      .ma_wrEnable    (ma_wrEnable),
       .ma_wr_index    (ex_ma_rdIndex),
-      .ex_undo_en     (ex_undo_en),
+      .ex_undoEnable  (ex_undoEnable),
       .ex_undo_index  (id_ex_rdIndex)
     );
  
-    assign stall      = if_id_valid && (!rs1_ready || !rs2_ready);
-    assign id_wr_en   = if_id_valid && id_regWrite    && !stall && !flush_id_ex && !ex_busy && !dmem_stall;
-    assign ex_undo_en = id_ex_valid && id_ex_regWrite && (branch_miss || trap_en || mret_en);
-    assign ma_wr_en   = ex_ma_valid && ex_ma_regWrite && !dmem_stall;
+    assign stall         = if_id_valid && (!rs1_ready || !rs2_ready);
+    assign id_wrEnable   = if_id_valid && id_regWrite    && !stall && !flush_id_ex && !ex_busy && !dmem_stall;
+    assign ex_undoEnable = id_ex_valid && id_ex_regWrite && (branch_miss || trap_en || mret_en);
+    assign ma_wrEnable   = ex_ma_valid && ex_ma_regWrite && !dmem_stall;
 
     // ── Branch predictor: bimodal PHT direction ──────────────────────────────
     assign pred_target = if_id_pc + id_imm;
@@ -556,7 +557,7 @@ module phantom_core (
 
     assign alu_lhs      = fwd_rs1Value;
     assign alu_rhs      = fwd_rs2Value;
-    assign ex_dmem_addr = fwd_rs1Value + id_ex_imm;
+    assign ex_dmemAddr  = fwd_rs1Value + id_ex_imm;
 
     // ── ALU ──────────────────────────────────────────────────────────────────
     alu u_alu (
@@ -665,8 +666,9 @@ module phantom_core (
       ex_ma_rs1Fwd      <= (flush_ex_ma) ? 32'd0      : fwd_rs1Value;
       ex_ma_rs2Fwd      <= (flush_ex_ma) ? 32'd0      : fwd_rs2Value;
       ex_ma_aluResult   <= (flush_ex_ma) ? 32'd0      : ex_result;
-      ex_ma_dmemAddr    <= (flush_ex_ma) ? 32'd0      : ex_dmem_addr;
- 
+      ex_ma_dmemAddr    <= (flush_ex_ma) ? 32'd0      : ex_dmemAddr;
+      ex_ma_dmemMulti   <= (flush_ex_ma) ? 1'b0       : dmem_multi;
+
       ex_ma_memRead     <= (flush_ex_ma) ? 1'b0       : id_ex_memRead;
       ex_ma_memWrite    <= (flush_ex_ma) ? 1'b0       : id_ex_memWrite;
       ex_ma_memWidth    <= (flush_ex_ma) ? `WIDTH_W   : id_ex_memWidth;
@@ -738,7 +740,7 @@ module phantom_core (
     assign mem_access = ex_ma_valid && (ex_ma_memRead || ex_ma_memWrite);
     assign dmem_req   = mem_access  && !sync_trap && !mem_done;
 
-    wire   mem_launch = dmem_req && dmem_multi && !mem_busy && !mem_done;
+    wire   mem_launch = dmem_req && ex_ma_dmemMulti && !mem_busy && !mem_done;
     always_ff @(posedge clk) begin
       if (!resetn) begin
         mem_busy <= 1'b0;
@@ -820,7 +822,7 @@ module phantom_core (
     end
 
     // ── DMEM port assignments ────────────────────────────────────────────────
-    assign dmem_raddr = ex_dmem_addr;
+    assign dmem_raddr = ex_dmemAddr;
     assign dmem_waddr = ex_ma_dmemAddr;
     assign dmem_we    = ex_ma_memWrite && !trap_en;
     assign dmem_be    = store_be;

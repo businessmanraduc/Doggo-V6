@@ -146,68 +146,67 @@ module muldiv_unit (
   // FSM + DATAPATH
   // ===========================================================================
 
-    always_ff @(posedge clk)begin
-      if (!resetn) begin
-        state <= S_IDLE;
-      end else if (flush) begin
+    always_ff @(posedge clk) begin
+      if (!resetn || flush) begin
         state <= S_IDLE;
       end else begin
         case (state)
-          // ── Idle: latch a new M instruction and dispatch ───────────────────
-          S_IDLE: begin
-            if (valid_in) begin
-              r_a      <= a;
-              r_b      <= b;
-              r_opcode <= opcode[1:0];
-              if (!opcode[2]) begin
-                state  <= S_MUL1;
-              end else begin
-                want_rem       <= opcode[1];
-                quot_sign      <= in_aSign ^ in_bSign;
-                rem_sign       <= in_aSign;
-                is_specialCase <= in_bZero | in_overflow;
-                special_res    <= in_specialRes;
-                divP  <= in_aMag;
-                divC  <= in_bMag;
-                rem   <= 33'd0;
-                quot  <= 32'd0;
-                cnt   <= 5'd0;
-                state <= (in_bZero | in_overflow) ? S_DONE : S_ITER;
-              end
-            end
-          end
-
-          // ── Multiply - 3 Stage: DSP partials -> fabric sum -> output ──────
-          S_MUL1: begin
-            r_lolo <= pp_lolo;
-            r_lohi <= pp_lohi;
-            r_hilo <= pp_hilo;
-            r_hihi <= pp_hihi; // :3
-            state  <= S_MUL2;
-          end
-
-          S_MUL2: begin
-            r_product <= product[63:0];
-            state     <= S_MUL3;
-          end
-
-          S_MUL3: if (consume) state <= S_IDLE;
-
-          // ── One quotient bit per cycle ────────────────────────────────────
-          S_ITER: begin
-            rem  <= sub_ge ? (rem_shift - {1'b0, divC}) : rem_shift;
-            quot <= {quot[30:0], sub_ge};
-            divP <= {divP[30:0], 1'b0};
-            cnt  <= cnt + 5'd1;
-            if (cnt == 5'd31) state <= S_DONE;
-          end
-
-          // ── Divide result consumed this cycle ──────────────────────────────
-          S_DONE: if(consume) state <= S_IDLE;
-
-          default: state <= S_IDLE;
-        endcase
+          S_IDLE: if (valid_in) state <=
+            (!opcode[2])              ? S_MUL1 :
+            (in_bZero | in_overflow)  ? S_DONE :
+            S_ITER;
+          S_MUL1: state <= S_MUL2;
+          S_MUL2: state <= S_MUL3;
+          S_MUL3: if (consume)      state <= S_IDLE;
+          S_ITER: if (cnt == 5'd31) state <= S_DONE;
+          S_DONE: if (consume)      state <= S_IDLE;
+          default:                  state <= S_IDLE;
       end
+    end
+
+    always_ff @(posedge clk) begin
+      case (state)
+        // ── Idle: latch a new M instruction and dispatch ───────────────────
+        S_IDLE: if (valid_in) begin
+          r_a      <= a;
+          r_b      <= b;
+          r_opcode <= opcode[1:0];
+          if (opcode[2]) begin
+            want_rem       <= opcode[1];
+            quot_sign      <= in_aSign ^ in_bSign;
+            rem_sign       <= in_aSign;
+            is_specialCase <= in_bZero | in_overflow;
+            special_res    <= in_specialRes;
+            divP  <= in_aMag;
+            divC  <= in_bMag;
+            rem   <= 33'd0;
+            quot  <= 32'd0;
+            cnt   <= 5'd0;
+          end
+        end
+
+        // ── Multiply - 3 Stage: DSP partials -> fabric sum -> output ──────
+        S_MUL1: begin
+          r_lolo <= pp_lolo;
+          r_lohi <= pp_lohi;
+          r_hilo <= pp_hilo;
+          r_hihi <= pp_hihi; // :3
+        end
+
+        S_MUL2: begin
+          r_product <= product[63:0];
+        end
+
+        // ── One quotient bit per cycle ────────────────────────────────────
+        S_ITER: begin
+          rem  <= sub_ge ? (rem_shift - {1'b0, divC}) : rem_shift;
+          quot <= {quot[30:0], sub_ge};
+          divP <= {divP[30:0], 1'b0};
+          cnt  <= cnt + 5'd1;
+        end
+
+        default: ;
+      endcase
     end
 
   // ===========================================================================
