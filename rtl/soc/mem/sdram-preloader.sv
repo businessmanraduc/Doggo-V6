@@ -40,26 +40,57 @@ module sdram_preloader #(
   ls_t         state;
   logic [AW:0] idx;
 
+  // ── Pipelined ROM read ──────────────────────────────────────────────────────
+  logic [31:0] rom_data;    // EBR synchronous read
+  logic [31:0] rom_word;    // EBR output register (feeds ld_wdata + verify)
+  logic [1:0]  warm;        // request warm-up shifter (cleared on idx step)
+
+  always_ff @(posedge clk) begin
+    rom_data <= rom[idx[AW-1:0]];
+    rom_word <= rom_data;
+  end
+
+  // ── Registered verify compare ───────────────────────────────────────────────
+  logic        vf_pending;  // 1 = captured read-back awaits compare
+  logic [31:0] vf_rdata;    // captured read-back word
+
+  // done is delayed 2 cycles so the last registered compare settles into
+  // verify_ok before the reset sequencer samples done && verify_ok.
+  logic [1:0]  done_q;
+
   assign active   = (state == LD_COPY) || (state == LD_VERIFY);
-  assign done     = (state == LD_DONE);
-  assign ld_req   = active;
+  assign done     = done_q[1];
+  assign ld_req   = active && warm[1];
   assign ld_we    = (state == LD_COPY);
   assign ld_be    = 4'hF;
   assign ld_addr  = {{(30-AW){1'b0}}, idx[AW-1:0], 2'b00};
-  assign ld_wdata = rom[idx[AW-1:0]];
+  assign ld_wdata = rom_word;
 
   always_ff @(posedge clk) begin
     if (!resetn) begin
-      state   <= LD_COPY; idx <= '0; verify_ok <= 1'b1;
-    end else if (ld_ready && active) begin
-      if (state == LD_VERIFY) begin
-        if (ld_rdata != rom[idx[AW-1:0]]) verify_ok <= 1'b0;
-      end
-      if (idx == (AW+1)'(N_WORDS-1)) begin
-        idx   <= '0;
-        state <= (state == LD_COPY) ? LD_VERIFY : LD_DONE;
-      end else begin
-        idx   <= idx + (AW+1)'(1);
+      state      <= LD_COPY; idx <= '0; verify_ok <= 1'b1;
+      warm       <= 2'b00;
+      vf_pending <= 1'b0;
+      done_q     <= 2'b00;
+    end else begin
+      warm       <= {warm[0], 1'b1};
+      vf_pending <= 1'b0;
+      done_q     <= {done_q[0], (state == LD_DONE)};
+
+      if (vf_pending && (vf_rdata != rom_word)) verify_ok <= 1'b0;
+
+      if (ld_ready && active) begin
+        if (state == LD_VERIFY) begin
+          vf_rdata   <= ld_rdata;
+          vf_pending <= 1'b1;
+        end
+        warm <= 2'b00;                     // idx steps -> rom_word goes stale
+        if (idx == (AW+1)'(N_WORDS-1)) begin
+          idx   <= '0;
+          state <= (state == LD_COPY) ? LD_VERIFY : LD_DONE;
+        end else begin
+          idx   <= idx + (AW+1)'(1);
+        end
       end
     end
   end
