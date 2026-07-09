@@ -47,11 +47,13 @@ module tb_core #(
     .irq_ext     (1'b0)
   );
 
+  logic [31:0] imem_stageA;
   always_ff @(posedge clk) begin
-    imem_data <= {
+    imem_stageA <= {
       mem[imem_addr + 3], mem[imem_addr + 2],
       mem[imem_addr + 1], mem[imem_addr]
     };
+    imem_data <= imem_stageA;
   end
 
   // ── Fetch-ready model ──────────────────────────────────────────────────────

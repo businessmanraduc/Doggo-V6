@@ -1,9 +1,13 @@
 // =============================================================================
-// PHANTOM-32  ──  Instruction Cache  (direct-mapped, dual fetch port)
+// PHANTOM-32  ──  Instruction Cache  (4-way set-associative, pipelined hit)
 // =============================================================================
 // Serves one 32-bit word per lookup;
+// 1 word/cycle throughput, 2-cycle hit latency:
+//   stage A (addr -> regs): BRAM data read + distributed tag/valid read
+//   stage B (regs -> out):  registered hit vector + registered data words
+// Hit/Miss resolved at stage A's compare (cycle N+1)
 //
-// Cache Geometry: direct-mapped, parameterised. With LINES=512, LINE_BYTES=32:
+// Cache Geometry: parameterised. With LINES=512, WAYS=4, LINE_BYTES=32:
 //    byte addr | tag[24:14] | index[13:5] | word-in-line[4:2] | hw[1] | b[0]
 //
 // Fill: a missed line is brought in from SDRAM as burst
@@ -50,24 +54,30 @@ module icache #(
   assign tag     = addr[OFF_W+SET_IDX_W +: TAG_W];
 
   // ── Miss-fill FSM ───────────────────────────────────────────────────────────
-  typedef enum logic[1:0] { S_CHECK, S_FILL, S_WAIT } state_t;
+  typedef enum logic[1:0] { S_CHECK, S_FILL, S_WAIT, S_WAIT2 } state_t;
   state_t               state;
   logic [SET_IDX_W-1:0] fill_set;
   logic [TAG_W-1:0]     fill_tag;
   logic [WIL_W-1:0]     fill_wcnt;
   logic [WAY_W-1:0]     victim_way;
 
-  // ── Per-way registered lookup results ───────────────────────────────────────
+  // ── Stage A - Per-way registered lookup results──────────────────────────────
   logic [31:0]      icacheWord  [0:WAYS-1];   // data storage
   logic [TAG_W-1:0] icacheTags  [0:WAYS-1];   // tag  storage
   logic             icacheValid [0:WAYS-1];   // valid bit
   logic [TAG_W-1:0] compTag;
   logic [SET_IDX_W-1:0] set;
 
-  // ── Combinational write-port controls ───────────────────────────────────────
+  // ── Stage B - Registered data words + hit vector ────────────────────────────
+  logic [31:0]      icacheWordQ [0:WAYS-1];
+  logic [WAYS-1:0]  hitVecQ;
+  logic             readyQ;
+
+  // ── Write-port controls ─────────────────────────────────────────────────────
   logic [WAYS-1:0]      dataWriteEnable;  // per-way data write enable
   logic [WORDIDX_W-1:0] dataWriteAddress; // data write address
-  logic [WAYS-1:0]      tagWriteEnable;   // per-way tag/valid write enable
+  logic [WAYS-1:0]      tagWriteEnable;   // per-way tag/valid strobe
+  logic [WAYS-1:0]      tagWriteQ;        // registered copy -> write decode
   always_comb begin
     integer way;
     dataWriteAddress = {fill_set, fill_wcnt};
@@ -76,6 +86,10 @@ module icache #(
       tagWriteEnable[way]  = (state == S_FILL) && fill_rvalid && (victim_way == WAY_W'(way)) &&
         (fill_wcnt == WIL_W'(LINE_WORDS-1));
     end
+  end
+  always_ff @(posedge clk) begin
+    if (!resetn) tagWriteQ <= '0;
+    else         tagWriteQ <= tagWriteEnable;
   end
 
   // ── Storage: WAYS × (BRAM data) + (distributed tags + FF valids) ────────────
@@ -88,11 +102,12 @@ module icache #(
 
       always_ff @(posedge clk) begin
         if (dataWriteEnable[genWay]) data_ram[dataWriteAddress] <= fill_rdata;
-        icacheWord[genWay] <= data_ram[wordidx];
+        icacheWord[genWay]  <= data_ram[wordidx];
+        icacheWordQ[genWay] <= icacheWord[genWay];
       end
 
       always_ff @(posedge clk) begin
-        if (tagWriteEnable[genWay]) tag_mem[fill_set] <= fill_tag;
+        if (tagWriteQ[genWay]) tag_mem[fill_set] <= fill_tag;
         icacheTags[genWay] <= tag_mem[set_idx];
       end
 
@@ -100,7 +115,7 @@ module icache #(
       always_ff @(posedge clk) begin
         if (!resetn)
           for (i = 0; i < SETS; i = i + 1) valid_mem[i] <= 1'b0;
-        else if (tagWriteEnable[genWay])
+        else if (tagWriteQ[genWay])
           valid_mem[fill_set] <= 1'b1;
         icacheValid[genWay] <= valid_mem[set_idx];
       end
@@ -112,26 +127,41 @@ module icache #(
     set     <= set_idx;
   end
 
-  // ── Hit detection + way select (OR-mux; at most one way hits) ───────────────
+  // ── Hit detection + way select (stage A compare; at most one way hits) ──────
   logic [WAYS-1:0]  hit_vec;
   logic             hit;
   logic [WAY_W-1:0] hit_way;
   always_comb begin
     integer way;
     hit_vec = '0;
-    data    = '0;
     hit_way = '0;
     for (way = 0; way < WAYS; way = way + 1) begin
       hit_vec[way] = icacheValid[way] && (icacheTags[way] == compTag);
-      if (hit_vec[way]) begin
-        data    = icacheWord[way];
-        hit_way = WAY_W'(way);
-      end
+      if (hit_vec[way]) hit_way = WAY_W'(way);
     end
   end
   assign hit = |hit_vec;
 
-  assign ready     = (state == S_CHECK) && hit;
+  // ── Stage B: register the hit verdict, select data from flops ───────────────
+  always_ff @(posedge clk) begin
+    if (!resetn) begin
+      readyQ  <= 1'b0;
+      hitVecQ <= '0;
+    end else begin
+      readyQ  <= (state == S_CHECK) && hit;
+      hitVecQ <= hit_vec;
+    end
+  end
+
+  always_comb begin
+    integer way;
+    data = '0;
+    for (way = 0; way < WAYS; way = way + 1) begin
+      if (hitVecQ[way]) data = icacheWordQ[way];
+    end
+  end
+
+  assign ready     = readyQ;
   assign fill_req  = (state == S_FILL);
   assign fill_addr = {{(32-ADDR_W){1'b0}}, fill_tag, fill_set, {WIL_W{1'b0}}, 2'b00};
 
@@ -196,7 +226,8 @@ module icache #(
           end
         end
 
-        S_WAIT:  state <= S_CHECK;
+        S_WAIT:  state <= S_WAIT2;
+        S_WAIT2: state <= S_CHECK;
         default: state <= S_CHECK;
       endcase
     end

@@ -5,10 +5,10 @@
 // fetch advances by constant +4 (word-aligned), I-Cache output lands in the
 // FIFO, and instruction-length alignment happens in dedicated aligner path.
 //
-//   req_pc (+4 / redirect) -> I-Cache (1-cycle word read) -> FIFO[{word, pc}] -> aligner
+//   req_pc (+4 / redirect) -> I-Cache (2-cycle word read) -> FIFO[{word, pc}] -> aligner
 //
 // Credit-based Fetch Issue: a new word is requested only when a FIFO slot is
-// reserved for its result (count + outstanding < DEPTH)
+// reserved for its result (count + in-flight < DEPTH)
 module fetch_unit #(
   parameter int DEPTH = 4
 ) (
@@ -40,9 +40,11 @@ module fetch_unit #(
   // FETCH SIDE: one request in flight; credit-gated issue; hold on miss
   // ===========================================================================
   logic [31:0] fetch_pc;            // next word address to fetch
-  logic [31:0] flight_pc;           // address of the in-flight request
-  logic        inFlight;            // a request is currently in flight
-  logic        stalling;            // re-sending flight_pc while I-Cache fills
+  logic [31:0] flight0_pc;          // address in the I-Cache lookup  stage (A)
+  logic [31:0] flight1_pc;          // address in the I-Cache respond stage (B)
+  logic        pending0;            // request occupies stage A
+  logic        pending1;            // request occupies stage B
+  logic        stalling;            // re-sending flight1_pc while I-Cache fills
 
   logic [31:0]   fifo_word     [0:DEPTH-1];
   logic          fifo_isCompLo [0:DEPTH-1];
@@ -51,20 +53,19 @@ module fetch_unit #(
   logic [IW:0]   count;
 
   logic [31:0] respWord;   assign respWord   = imem_data;
-  logic        resultHit;  assign resultHit  = inFlight  &&  imem_ready && !redirect_en;
-  logic        resultMiss; assign resultMiss = inFlight  && !imem_ready && !redirect_en;
-  logic        pushResp;   assign pushResp   = resultHit && (count < (IW+1)'(DEPTH)); 
+  logic        resultHit;  assign resultHit  = (pending1 || stalling) &&  imem_ready && !redirect_en;
+  logic        resultMiss; assign resultMiss =  pending1              && !imem_ready && !redirect_en;
+  logic        pushResp;   assign pushResp   = resultHit && (count < (IW+1)'(DEPTH));
   logic        pop;
 
   logic [IW:0] occupancyNext; // issue only if current cycle push/pop leaves free slot
   assign occupancyNext = count + (pushResp ? (IW+1)'(1) : '0) - (pop ? (IW+1)'(1) : '0);
 
-  logic [IW:0] issueRoom; assign issueRoom = count + (pushResp ? (IW+1)'(1) : '0);
+  logic [IW:0] issueRoom; assign issueRoom = count + (IW+1)'(pushResp) + (IW+1)'(pending0);
   logic can_issue; assign can_issue = !stalling && !resultMiss
-    && (issueRoom < (IW+1)'(DEPTH))
-    && (resultHit || !inFlight);
+    && (issueRoom < (IW+1)'(DEPTH));
 
-  assign imem_addr = stalling ? flight_pc : fetch_pc;
+  assign imem_addr = stalling ? flight1_pc : fetch_pc;
 
 
   // ===========================================================================
@@ -98,13 +99,15 @@ module fetch_unit #(
   // ===========================================================================
   always_ff @(posedge clk) begin
     if (!resetn) begin
-      fetch_pc <= `RESET_VECTOR; flight_pc <= 32'd0; inFlight <= 1'b0;
+      fetch_pc <= `RESET_VECTOR; flight0_pc <= 32'd0; flight1_pc <= 32'd0;
+      pending0 <= 1'b0; pending1 <= 1'b0;
       head <= '0; tail <= '0; count <= '0; align_pc <= `RESET_VECTOR;
       stalling <= 1'b0;
     end else if (redirect_en) begin
-      fetch_pc <= {redirect_pc[31:2], 2'b00}; inFlight <= 1'b0;
+      fetch_pc <= {redirect_pc[31:2], 2'b00};
+      pending0 <= 1'b0; pending1 <= 1'b0;
       head <= '0; tail <= '0; count <= '0; align_pc <= redirect_pc;
-      stalling <= 1'b0; flight_pc <= 32'd0;
+      stalling <= 1'b0; flight0_pc <= 32'd0; flight1_pc <= 32'd0;
     end else begin
       if (pushResp) begin
         fifo_word[tail]     <= respWord;
@@ -117,18 +120,22 @@ module fetch_unit #(
       count <= occupancyNext;
 
       // ── Fetch engine ───────────────────────────────────────────────────────
-      if (resultMiss) begin
-        stalling  <= 1'b1;
-        inFlight  <= 1'b1;
-      end else if (stalling) begin
-        stalling  <= 1'b0;
-        inFlight  <= 1'b0;
-      end else if (can_issue) begin
-        flight_pc <= fetch_pc;
-        fetch_pc  <= fetch_pc + 32'd4;
-        inFlight  <= 1'b1;
+      if (resultMiss) begin                    // oldest missed: rewind + hold
+        stalling   <= 1'b1;                    // flight1_pc keeps the missed
+        pending0   <= 1'b0;                    // address (no pipe shift); the
+        pending1   <= 1'b0;                    // stage-A request is dropped and
+        fetch_pc   <= flight1_pc + 32'd4;      // re-issued after the fill
       end else begin
-        inFlight  <= 1'b0;
+        pending1   <= pending0;                // request pipe follows the cache
+        if (pending0) flight1_pc <= flight0_pc;
+        pending0   <= 1'b0;
+        if (stalling) begin
+          if (imem_ready) stalling <= 1'b0;    // fill done: flight1_pc pushed
+        end else if (can_issue) begin
+          flight0_pc <= fetch_pc;
+          fetch_pc   <= fetch_pc + 32'd4;
+          pending0   <= 1'b1;
+        end
       end
 
       if (consume && valid) align_pc <= nextpc;
