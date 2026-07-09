@@ -71,6 +71,7 @@ module phantom_core (
     logic [4:0]       if_id_rdIndex;    // extracted rd  index
     logic             if_id_valid;      // 1 => real instruction (not a bubble)
     logic [1:0]       if_id_phtCounter; // bimodal PHT counter
+    logic [31:0]      if_id_bjImm;      // registered B/J immediate
 
     // ── ID/EX ────────────────────────────────────────────────────────────────
     logic [31:0]      id_ex_pc;         // PC value for ID's instruction
@@ -133,6 +134,7 @@ module phantom_core (
     logic             ex_ma_memRead;
     logic             ex_ma_memWrite;
     logic [2:0]       ex_ma_memWidth;
+    logic             ex_ma_misaligned;
     logic             ex_ma_regWrite;
     logic [1:0]       ex_ma_wbSel;
 
@@ -184,7 +186,8 @@ module phantom_core (
     logic             flush_id_ex;
     logic             flush_ex_ma;
 
-    // ── IF: fast_decoder outputs ─────────────────────────────────────────────
+    // ── IF: fast_decoder + bj_target outputs ─────────────────────────────────
+    logic [31:0]      fe_bjImm;
     logic [4:0]       fd_rs1Index;
     logic [4:0]       fd_rs2Index;
     logic [4:0]       fd_rdIndex;
@@ -238,7 +241,6 @@ module phantom_core (
     logic             ex_branchTaken;
     logic [31:0]      ex_belowAddr;
     logic [31:0]      ex_targetAddr;
-
     logic [31:0]      truepc;
 
     // ── EX: operands & ALU ───────────────────────────────────────────────────
@@ -254,6 +256,7 @@ module phantom_core (
     logic             muldiv_active;    // 1 = muldiv instruction inside EX
     logic             ex_busy;          // 1 = stall (muldiv not finished)
     logic [31:0]      ex_result;        // EX writeback value (ALU or muldiv)
+    logic             ex_misaligned;
 
     // ── EX: CSR read ─────────────────────────────────────────────────────────
     logic [31:0]      csr_rdData;
@@ -335,7 +338,7 @@ module phantom_core (
       .INIT      (2'b10)
     ) u_pht (
       .clk        (clk),
-      .rd_en      (!redirect_en && !stall && !ex_busy && !dmem_stall && fe_valid),
+      .rd_en      (advance_fe && fe_valid),
       .rd_idx     (fe_pc[PHT_IDX_W:1]),
       .rd_counter (if_id_phtCounter),
       .wr_en      (resetn && ex_ma_valid && ex_ma_isBranch && !dmem_stall),
@@ -360,7 +363,20 @@ module phantom_core (
       .rd_index       (fd_rdIndex)
     );
 
-    assign fe_consume = fe_valid && !stall && !ex_busy && !dmem_stall && !redirect_en;
+    bj_target u_bjt (
+      .instrWord      (fe_instr),
+      .is_compressed  (fe_isComp),
+      .bj_imm         (fe_bjImm)
+    );
+
+    (* keep *) logic advance_fe;
+    (* keep *) logic advance_if_id;
+    (* keep *) logic advance_id_ex;
+    assign advance_fe    = !stall   && !ex_busy && !dmem_stall && !redirect_en;
+    assign advance_if_id = !stall   && !ex_busy && !dmem_stall;
+    assign advance_id_ex = !ex_busy && !dmem_stall;
+
+    assign fe_consume = fe_valid && advance_fe;
 
   // ===========================================================================
   // IF STAGE
@@ -388,7 +404,8 @@ module phantom_core (
         if_id_rs2Index <= 5'd0;
         if_id_rdIndex  <= 5'd0;
         if_id_valid    <= 1'b0;
-      end else if (!stall && !ex_busy && !dmem_stall) begin
+        if_id_bjImm    <= 32'd0;
+      end else if (advance_if_id) begin
         if (fe_valid && !pred_taken) begin              // advance
           if_id_pc       <= fe_pc;
           if_id_pc2      <= fe_pc + 32'd2;
@@ -399,6 +416,7 @@ module phantom_core (
           if_id_rs2Index <= fd_rs2Index;
           if_id_rdIndex  <= fd_rdIndex;
           if_id_valid    <= 1'b1;
+          if_id_bjImm    <= fe_bjImm;
         end else begin                                  // fetch starved -> bubble
           if_id_pc       <= 32'd0;
           if_id_pc2      <= 32'd0;
@@ -409,6 +427,7 @@ module phantom_core (
           if_id_rs2Index <= 5'd0;
           if_id_rdIndex  <= 5'd0;
           if_id_valid    <= 1'b0;
+          if_id_bjImm    <= 32'd0;
         end
       end
     end
@@ -477,12 +496,12 @@ module phantom_core (
     );
  
     assign stall         = if_id_valid && (!rs1_ready || !rs2_ready);
-    assign id_wrEnable   = if_id_valid && id_regWrite    && !stall && !flush_id_ex && !ex_busy && !dmem_stall;
+    assign id_wrEnable   = if_id_valid && id_regWrite    && !stall && !flush_id_ex && advance_id_ex;
     assign ex_undoEnable = id_ex_valid && id_ex_regWrite && (branch_miss || trap_en || mret_en);
     assign ma_wrEnable   = ex_ma_valid && ex_ma_regWrite && !dmem_stall;
 
     // ── Branch predictor: bimodal PHT direction ──────────────────────────────
-    assign pred_target = if_id_pc + id_imm;
+    assign pred_target = if_id_pc + if_id_bjImm;
     assign pred_taken  = if_id_valid && (
       (id_isJump   && !id_isJalr) ||
       (id_isBranch && if_id_phtCounter[1])
@@ -500,7 +519,7 @@ module phantom_core (
 
     assign flush_id_ex = branch_miss || trap_en || mret_en;
     always_ff @(posedge clk) begin
-      if ((!ex_busy && !dmem_stall) || flush_id_ex) begin
+      if (advance_id_ex || flush_id_ex) begin
       id_ex_pc          <= (flush_id_ex || stall) ? 32'd0      : if_id_pc;
       id_ex_pc2         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc2;
       id_ex_pc4         <= (flush_id_ex || stall) ? 32'd0      : if_id_pc4;
@@ -558,6 +577,11 @@ module phantom_core (
     assign alu_lhs      = fwd_rs1Value;
     assign alu_rhs      = fwd_rs2Value;
     assign ex_dmemAddr  = fwd_rs1Value + id_ex_imm;
+
+    // ── Width-vs-Address misalignment ────────────────────────────────────────
+    assign ex_misaligned =
+      ((id_ex_memWidth == `WIDTH_H || id_ex_memWidth == `WIDTH_HU) && ex_dmemAddr[0]) ||
+       (id_ex_memWidth == `WIDTH_W && |ex_dmemAddr[1:0]);
 
     // ── ALU ──────────────────────────────────────────────────────────────────
     alu u_alu (
@@ -672,6 +696,7 @@ module phantom_core (
       ex_ma_memRead     <= (flush_ex_ma) ? 1'b0       : id_ex_memRead;
       ex_ma_memWrite    <= (flush_ex_ma) ? 1'b0       : id_ex_memWrite;
       ex_ma_memWidth    <= (flush_ex_ma) ? `WIDTH_W   : id_ex_memWidth;
+      ex_ma_misaligned  <= (flush_ex_ma) ? 1'b0       : ex_misaligned;
       ex_ma_regWrite    <= (flush_ex_ma) ? 1'b0       : id_ex_regWrite;
       ex_ma_wbSel       <= (flush_ex_ma) ? 2'b00      : id_ex_wbSel;
  
@@ -703,9 +728,9 @@ module phantom_core (
       .ma_pc         (ex_ma_pc),
       .ma_instr      (ex_ma_instr),
       .ma_dmemAddr   (ex_ma_dmemAddr),
+      .ma_misaligned (ex_ma_misaligned),
       .ma_mem_read   (ex_ma_memRead),
       .ma_mem_write  (ex_ma_memWrite),
-      .ma_mem_width  (ex_ma_memWidth),
       .ma_is_ecall   (ex_ma_isECALL),
       .ma_is_ebreak  (ex_ma_isEBREAK),
       .ma_is_illegal (ex_ma_isIllegal),

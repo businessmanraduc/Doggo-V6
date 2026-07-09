@@ -105,10 +105,23 @@ module regfile (
   // ===========================================================================
   // OPERAND-READY SCOREBOARD  ──  pending-writer counter per register
   // ===========================================================================
-    logic [1:0] cnt [0:31];
+    logic [1:0]  cnt      [0:31];
+    logic [1:0]  cnt_next [0:31];
+    logic [31:0] busy;
     initial begin
       for (int i = 0; i < 32; i++) begin
         cnt[i] = 2'd0;
+      end
+      busy = 32'd0;
+    end
+
+    always_comb begin
+      cnt_next[0] = 2'b0;
+      for (int i = 1; i < 32; i++) begin
+        cnt_next[i] = cnt[i]
+          + 2'((id_wrEnable   && (id_wrIndex   == 5'(i))))
+          - 2'((ma_wrEnable   && (ma_wrIndex   == 5'(i))))
+          - 2'((ex_undoEnable && (ex_undoIndex == 5'(i))));
       end
     end
 
@@ -117,18 +130,17 @@ module regfile (
         for (int i = 0; i < 32; i++) begin
           cnt[i] <= 2'd0;
         end
+        busy <= 32'd0;
       end else begin
         for (int i = 1; i < 32; i++) begin              // i = 0 is x0
-          cnt[i] <= cnt[i]
-            + 2'((id_wrEnable   && (id_wrIndex   == 5'(i))))
-            - 2'((ma_wrEnable   && (ma_wrIndex   == 5'(i))))
-            - 2'((ex_undoEnable && (ex_undoIndex == 5'(i))));
+          cnt[i]  <=  cnt_next[i];
+          busy[i] <= (cnt_next[i] != 2'd0);
         end
       end
     end
 
-    assign rs1_ready = (cnt[rd_index_a] == 2'd0);
-    assign rs2_ready = (cnt[rd_index_b] == 2'd0);
+    assign rs1_ready = !busy[rd_index_a];
+    assign rs2_ready = !busy[rd_index_b];
 
   // ===========================================================================
   // OPERAND-READY SCOREBOARD

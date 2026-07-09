@@ -44,7 +44,9 @@ module fetch_unit #(
   logic        inFlight;            // a request is currently in flight
   logic        stalling;            // re-sending flight_pc while I-Cache fills
 
-  logic [31:0]   fifo_word [0:DEPTH-1];
+  logic [31:0]   fifo_word     [0:DEPTH-1];
+  logic          fifo_isCompLo [0:DEPTH-1];
+  logic          fifo_isCompHi [0:DEPTH-1];
   logic [IW-1:0] head, tail;
   logic [IW:0]   count;
 
@@ -74,7 +76,7 @@ module fetch_unit #(
   logic h0_ok; assign h0_ok = (count >= (IW+1)'(1));
   logic h1_ok; assign h1_ok = (count >= (IW+1)'(2));
 
-  logic head_isComp; assign head_isComp = (lowerHalfWord[1:0] != 2'b11);
+  logic head_isComp; assign head_isComp = align_pc[1] ? fifo_isCompHi[head] : fifo_isCompLo[head];
   logic straddle;    assign straddle    = !head_isComp && align_pc[1];
 
   logic [15:0] lowerHalfWord; assign lowerHalfWord =
@@ -88,7 +90,7 @@ module fetch_unit #(
   assign valid   = h0_ok && (head_isComp || !straddle || h1_ok);
 
   logic [31:0] nextpc; assign nextpc = align_pc + (head_isComp ? 32'd2 : 32'd4);
-  assign pop = consume && valid && (nextpc[31:2] != align_pc[31:2]);
+  assign pop = consume && valid && (!head_isComp || align_pc[1]);
 
 
   // ===========================================================================
@@ -105,8 +107,10 @@ module fetch_unit #(
       stalling <= 1'b0; flight_pc <= 32'd0;
     end else begin
       if (pushResp) begin
-        fifo_word[tail] <= respWord;
-        tail            <= tail + IW'(1);
+        fifo_word[tail]     <= respWord;
+        fifo_isCompLo[tail] <= (respWord[1:0]   != 2'b11);
+        fifo_isCompHi[tail] <= (respWord[17:16] != 2'b11);
+        tail                <= tail + IW'(1);
       end
 
       if (pop) head <= head + IW'(1);
