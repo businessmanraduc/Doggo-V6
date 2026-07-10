@@ -118,7 +118,9 @@ module phantom_core (
     logic [31:0]      ex_ma_belowAddr;  // PC target if branch NOT taken
     logic [31:0]      ex_ma_targetAddr; // actual branch/jump target
     logic             ex_ma_branchTaken;
-    logic             ex_ma_predTaken;  // prediction carried for MA verification
+    logic             ex_ma_branchMiss; // EX-computed mispredict verdict (unqualified)
+    logic             ex_ma_syncTrap;   // EX-computed synchronous trap verdict
+    logic             ex_ma_willLaunch; // EX-computed multi-cycle launch verdict
     logic             ex_ma_isBranch;   // 1 => conditional branch
     logic [1:0]       ex_ma_phtOld;     // PHT counter at predict time
 
@@ -129,7 +131,6 @@ module phantom_core (
     logic [31:0]      ex_ma_rs2Fwd;     // forwarded rs2 value
     logic [31:0]      ex_ma_aluResult;
     logic [31:0]      ex_ma_dmemAddr;   // DMEM byte address (rs1_fwd + imm)
-    logic             ex_ma_dmemMulti;  // 1 = MA access uses multi-cycle handshake
 
     logic             ex_ma_memRead;
     logic             ex_ma_memWrite;
@@ -180,9 +181,9 @@ module phantom_core (
     logic             mem_busy;         // multi-cycle SDRAM access
     logic             mem_done;         // 1 = access complete (resume cycle)
     logic [31:0]      dmem_rdata_q;     // latched load word
-    logic             branch_miss;      // taken branch/jump resolved in MA
     logic             trap_en;
     logic             mret_en;
+    (* keep *) logic  irq_memBlock;     // MA holds in-flight multi-cycle mem op
     logic             bubble_id_ex;
     logic             flush_id_ex;
     logic             flush_ex_ma;
@@ -227,7 +228,7 @@ module phantom_core (
     logic             pred_taken;       // 1 => predict branch/jump taken
     logic [31:0]      pred_target;      // predicted target
     logic             pred_redirect;    // ID-sourced predicted-taken redirect
-    logic             ma_redirect;      // MA-sourced (branch_miss/trap/mret)
+    logic             ma_redirect;      // MA-sourced (branchMiss/trap/mret)
 
     // ── Scoreboard control ───────────────────────────────────────────────────
     logic             rs1_ready;        // ID rs1 operand available
@@ -258,12 +259,15 @@ module phantom_core (
     logic             ex_busy;          // 1 = stall (muldiv not finished)
     logic [31:0]      ex_result;        // EX writeback value (ALU or muldiv)
     logic             ex_misaligned;
+    logic             ex_syncTrap;      // sync-exception verdict
+    logic             ex_branchMiss;    // mispredict verdict
+    logic             ex_willLaunch;    // multi-cycle launch verdict
 
     // ── EX: CSR read ─────────────────────────────────────────────────────────
     logic [31:0]      csr_rdData;
     logic             ex_csrLegal;
 
-    // ── MA: trap_unit outputs (synchronous exceptions only) ──────────────────
+    // ── MA: tsync-trap verdict + trap_unit cause outputs ─────────────────────
     logic             sync_trap;
     logic [31:0]      sync_mepc;
     logic [31:0]      sync_mcause;
@@ -326,12 +330,12 @@ module phantom_core (
       .valid       (fe_valid)
     );
 
-    assign ma_redirect = branch_miss || trap_en || mret_en;
+    assign ma_redirect = ex_ma_branchMiss || trap_en || mret_en;
     assign redirect_en = ma_redirect || pred_redirect;
     assign redirect_pc =
-      trap_en     ? csr_mtvec :
-      mret_en     ? csr_mepc  :
-      branch_miss ? truepc    :
+      trap_en          ? csr_mtvec :
+      mret_en          ? csr_mepc  :
+      ex_ma_branchMiss ? truepc    :
     pred_target;
 
     pht #(
@@ -481,7 +485,7 @@ module phantom_core (
  
     assign stall         = if_id_valid && (!rs1_ready || !rs2_ready);
     assign id_wrEnable   = if_id_valid && id_regWrite    && !stall && !flush_id_ex && advance_id_ex;
-    assign ex_undoEnable = id_ex_valid && id_ex_regWrite && (branch_miss || trap_en || mret_en);
+    assign ex_undoEnable = id_ex_valid && id_ex_regWrite && (ex_ma_branchMiss || trap_en || mret_en);
     assign ma_wrEnable   = ex_ma_valid && ex_ma_regWrite && !dmem_stall;
 
     // ── Branch predictor: bimodal PHT direction ──────────────────────────────
@@ -501,7 +505,7 @@ module phantom_core (
   // ID/EX PIPELINE REGISTER
   // ===========================================================================
 
-    assign flush_id_ex  = branch_miss || trap_en || mret_en;
+    assign flush_id_ex  = ex_ma_branchMiss || trap_en || mret_en;
     assign bubble_id_ex = flush_id_ex || stall || !if_id_valid;
     always_ff @(posedge clk) begin
       if (advance_id_ex || flush_id_ex) begin
@@ -573,6 +577,14 @@ module phantom_core (
       ((id_ex_memWidth == `WIDTH_H || id_ex_memWidth == `WIDTH_HU) && ex_dmemAddr[0]) ||
        (id_ex_memWidth == `WIDTH_W && |ex_dmemAddr[1:0]);
 
+    // ── Synchronous-trap verdict ─────────────────────────────────────────────
+    assign ex_syncTrap = id_ex_isEBREAK || id_ex_isIllegal || id_ex_isECALL ||
+                        ((id_ex_memRead || id_ex_memWrite) && ex_misaligned);
+
+    // ── Multi-cycle launch verdict ───────────────────────────────────────────
+    assign ex_willLaunch = id_ex_valid && (id_ex_memRead || id_ex_memWrite)
+                        && !ex_syncTrap && dmem_multi;
+
     // ── ALU ──────────────────────────────────────────────────────────────────
     alu u_alu (
       .lhs    (alu_lhs),
@@ -623,6 +635,7 @@ module phantom_core (
 
     // ── Branch Taken Detection ───────────────────────────────────────────────
     assign ex_branchTaken = (id_ex_isBranch && branch_taken) || id_ex_isJump;
+    assign ex_branchMiss  = ex_branchTaken != id_ex_predTaken;
 
     assign ex_csrLegal = (id_ex_csrOp == `CSR_OP_RW) || (id_ex_csrUseImm
       ? (|id_ex_instr[19:15])
@@ -661,23 +674,25 @@ module phantom_core (
   // EX/MA PIPELINE REGISTER
   // ===========================================================================
 
-    assign flush_ex_ma = trap_en || mret_en || branch_miss || ex_busy;
+    assign flush_ex_ma = trap_en || mret_en || ex_ma_branchMiss || ex_busy;
     always_ff @(posedge clk) begin
       if (!dmem_stall) begin
-      ex_ma_branchTaken <= (flush_ex_ma) ? 1'b0 : ex_branchTaken;
-      ex_ma_predTaken   <= (flush_ex_ma) ? 1'b0 : id_ex_predTaken;
-      ex_ma_isBranch    <= (flush_ex_ma) ? 1'b0 : id_ex_isBranch;
+      ex_ma_branchTaken <= (flush_ex_ma)            ? 1'b0 : ex_branchTaken;
+      ex_ma_branchMiss  <= (flush_ex_ma || !resetn) ? 1'b0 : ex_branchMiss;
+      ex_ma_syncTrap    <= (flush_ex_ma || !resetn) ? 1'b0 : ex_syncTrap;
+      ex_ma_willLaunch  <= (flush_ex_ma || !resetn) ? 1'b0 : ex_willLaunch;
+      ex_ma_isBranch    <= (flush_ex_ma)            ? 1'b0 : id_ex_isBranch;
 
-      ex_ma_memRead     <= (flush_ex_ma) ? 1'b0 : id_ex_memRead;
-      ex_ma_memWrite    <= (flush_ex_ma) ? 1'b0 : id_ex_memWrite;
-      ex_ma_regWrite    <= (flush_ex_ma) ? 1'b0 : id_ex_regWrite;
+      ex_ma_memRead     <= (flush_ex_ma)            ? 1'b0 : id_ex_memRead;
+      ex_ma_memWrite    <= (flush_ex_ma)            ? 1'b0 : id_ex_memWrite;
+      ex_ma_regWrite    <= (flush_ex_ma)            ? 1'b0 : id_ex_regWrite;
 
-      ex_ma_csrEnable   <= (flush_ex_ma) ? 1'b0 : id_ex_csrEnable;
-      ex_ma_isECALL     <= (flush_ex_ma) ? 1'b0 : id_ex_isECALL;
-      ex_ma_isEBREAK    <= (flush_ex_ma) ? 1'b0 : id_ex_isEBREAK;
-      ex_ma_isMRET      <= (flush_ex_ma) ? 1'b0 : id_ex_isMRET;
-      ex_ma_isIllegal   <= (flush_ex_ma) ? 1'b0 : id_ex_isIllegal;
-      ex_ma_valid       <= (!resetn || flush_ex_ma) ? 1'b0 : id_ex_valid;
+      ex_ma_csrEnable   <= (flush_ex_ma)            ? 1'b0 : id_ex_csrEnable;
+      ex_ma_isECALL     <= (flush_ex_ma)            ? 1'b0 : id_ex_isECALL;
+      ex_ma_isEBREAK    <= (flush_ex_ma)            ? 1'b0 : id_ex_isEBREAK;
+      ex_ma_isMRET      <= (flush_ex_ma)            ? 1'b0 : id_ex_isMRET;
+      ex_ma_isIllegal   <= (flush_ex_ma)            ? 1'b0 : id_ex_isIllegal;
+      ex_ma_valid       <= (flush_ex_ma || !resetn) ? 1'b0 : id_ex_valid;
       end
     end
 
@@ -697,7 +712,6 @@ module phantom_core (
       ex_ma_rs2Fwd      <= fwd_rs2Value;
       ex_ma_aluResult   <= ex_result;
       ex_ma_dmemAddr    <= ex_dmemAddr;
-      ex_ma_dmemMulti   <= dmem_multi;
 
       ex_ma_memWidth    <= id_ex_memWidth;
       ex_ma_misaligned  <= ex_misaligned;
@@ -732,19 +746,25 @@ module phantom_core (
       .ma_is_ebreak  (ex_ma_isEBREAK),
       .ma_is_illegal (ex_ma_isIllegal),
       .ma_is_mret    (ex_ma_isMRET),
-      .trap_en       (sync_trap),
       .trap_mepc     (sync_mepc),
       .trap_mcause   (sync_mcause),
       .trap_mtval    (sync_mtval),
       .mret_en       (mret_en)
     );
 
+    // ── Sync-trap verdict: precomputed in EX, registered in EX/MA ────────────
+    assign sync_trap = ex_ma_syncTrap;
+
     // ── interrupt_unit: evaluate async interrupts at the MA instruction ──────
+    assign irq_memBlock = mem_busy || ex_ma_willLaunch;
     interrupt_unit u_irq (
+      .clk         (clk),
+      .resetn      (resetn),
       .mie         (csr_mie),
       .mip         (csr_mip),
       .mstatus_mie (csr_mstatus[3]),
-      .ma_valid    (ex_ma_valid && !dmem_stall),
+      .csr_wr      (csr_wrEnable),
+      .ma_valid    (ex_ma_valid && !irq_memBlock),
       .sync_trap   (sync_trap),
       .irq_take    (irq_take),
       .irq_cause   (irq_cause)
@@ -762,7 +782,7 @@ module phantom_core (
     assign mem_access = ex_ma_valid && (ex_ma_memRead || ex_ma_memWrite);
     assign dmem_req   = mem_access  && !sync_trap && !mem_done;
 
-    wire   mem_launch = dmem_req && ex_ma_dmemMulti && !mem_busy && !mem_done;
+    wire   mem_launch = ex_ma_willLaunch && !mem_busy && !mem_done;
     always_ff @(posedge clk) begin
       if (!resetn) begin
         mem_busy <= 1'b0;
@@ -778,12 +798,8 @@ module phantom_core (
         end
       end
     end
-    assign dmem_stall  = mem_launch || mem_busy;
-
-    // ── Branch Miss Detection ────────────────────────────────────────────────
-    assign branch_miss   = !trap_en && !mret_en && (ex_ma_branchTaken != ex_ma_predTaken);
-
-    assign truepc  = ex_ma_branchTaken ? ex_ma_targetAddr  : ex_ma_belowAddr;
+    assign dmem_stall = mem_launch || mem_busy;
+    assign truepc     = ex_ma_branchTaken ? ex_ma_targetAddr  : ex_ma_belowAddr;
 
     // ── CSR Read-Modify-Write ────────────────────────────────────────────────
     assign csr_zimm     = {27'd0, ex_ma_instr[19:15]};

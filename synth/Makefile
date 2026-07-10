@@ -66,7 +66,7 @@ PACKAGE  = --package CABGA381
 LPF      = ulx3s_v20.lpf
 
 # ── Placer tuning ─────────────────────────────────────────────────────────────
-PLACER_OPTS = --placer-heap-timingweight 75
+PLACER_OPTS = --placer-heap-timingweight 90
 
 # ── Output artefacts ──────────────────────────────────────────────────────────
 PROG_ELF    = program.elf

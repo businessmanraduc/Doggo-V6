@@ -2,10 +2,7 @@
 // =============================================================================
 // PHANTOM-32  ──  Trap Unit  (MA Stage)
 // =============================================================================
-// Purely combinational exception detector and cause encoder.  Sits in the MA
-// stage where all required data (effective address, decoded flags) is finally
-// available.  Produces four outputs fed directly into csr_regfile's trap
-// interface, plus trap_en and mret_en which cpu.v also uses for PC redirection.
+// Purely combinational cause encoder.
 //
 // ── Exceptions handled ───────────────────────────────────────────────────────
 //   EBREAK             mcause = 3   mtval = faulting PC
@@ -37,7 +34,6 @@ module trap_unit (
   input  logic        ma_is_mret,     // MRET return-from-trap instruction
 
   // ── Outputs to csr_regfile ─────────────────────────────────────────────────
-  output logic        trap_en,        // 1 = latch mepc/mcause/mtval, update mstatus
   output logic [31:0] trap_mepc,      // PC to save in mepc
   output logic [31:0] trap_mcause,    // exception cause word (bit31=0, lower=code)
   output logic [31:0] trap_mtval,     // auxiliary trap value
@@ -60,10 +56,8 @@ module trap_unit (
 
 
   // ===========================================================================
-  // TRAP ENABLE
+  // RETURN FROM TRAP
   // ===========================================================================
-  assign trap_en = ma_is_ebreak  | ma_is_illegal  | ma_is_ecall 
-                 | load_misalign | store_misalign ;
   assign mret_en = ma_is_mret;
 
 
