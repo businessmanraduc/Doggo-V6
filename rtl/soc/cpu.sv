@@ -1,9 +1,13 @@
 `include "soc_map.vh"
 // =============================================================================
-// PHANTOM-32  ──  CPU  (Core + I-Cache + direct SDRAM data + Peripheral Bus)
+// PHANTOM-32  ──  CPU  (Core + Boot ROM + I-Cache + direct SDRAM data + Peripheral Bus)
 // =============================================================================
-// Wraps phantom_core with the I-Cache (instructions served from SDRAM behind a
-// direct-mapped BRAM cache)
+// Wraps phantom_core with the boot ROM (UART bootloader, fetch-side) and the
+// I-Cache (instructions served from SDRAM behind a 4-way BRAM cache)
+//
+//  Fetch decode (bit 29 of the fetch address):
+//    addr[29] == 1 -> boot ROM  (reset vector; I-Cache lookup/fill suppressed)
+//    addr[29] == 0 -> I-Cache -> SDRAM
 //
 //  Address decode (MSB of MA address):
 //    addr[31] == 1 -> peripheral bus (UART, CLINT, LEDs)
@@ -11,7 +15,10 @@
 //
 //  The data access uses registered-completion handshake (dmem_multi / dmem_ready)
 // =============================================================================
-module cpu (
+module cpu #(
+  parameter logic [31:0] RESET_PC     = `SOC_BOOTROM_BASE,
+  parameter              BOOTROM_INIT = "bootrom.hex"
+) (
   input  logic clk,
   input  logic resetn,
 
@@ -44,10 +51,14 @@ module cpu (
   // INTERNAL MEMORY BUS SIGNALS
   // ===========================================================================
 
-    // ── Instruction Fetch (core <-> I-Cache) ─────────────────────────────────
+    // ── Instruction Fetch (core <-> boot ROM / I-Cache) ──────────────────────
     logic [31:0] imem_addr;     // fetch address (word-aligned)
     logic [31:0] imem_data;     // instruction word
-    logic        imem_ready;    // driven by the I-Cache
+    logic        imem_ready;    // region-muxed: boot ROM or I-Cache
+
+    // ── I-Cache response ─────────────────────────────────────────────────────
+    logic [31:0] icache_data;
+    logic        icache_ready;
 
     // ── I-Cache SDRAM fill master ────────────────────────────────────────────
     logic [31:0] icache_fillAddr;
@@ -92,7 +103,9 @@ module cpu (
   // ===========================================================================
   // PHANTOM CORE
   // ===========================================================================
-    phantom_core u_core (
+    phantom_core #(
+      .RESET_PC (RESET_PC)
+    ) u_core (
       .clk        (clk),
       .resetn     (resetn),
       // ── IMEM ───────────────────────────────────────────────────────────────
@@ -119,6 +132,42 @@ module cpu (
 
 
   // ===========================================================================
+  // BOOT ROM  ──  UART bootloader at SOC_BOOTROM_BASE (fetch-side region)
+  // ===========================================================================
+    logic        boot_sel;
+    logic        boot_selQ;
+    logic        boot_selQQ;
+    logic [31:0] boot_data;
+    assign boot_sel = imem_addr[`SOC_BOOTROM_SEL_BIT];
+
+    always_ff @(posedge clk) begin
+      if (!resetn) begin
+        boot_selQ  <= 1'b0;
+        boot_selQQ <= 1'b0;
+      end else begin
+        boot_selQ  <= boot_sel;
+        boot_selQQ <= boot_selQ;
+      end
+    end
+
+    bootrom #(
+      .INIT_FILE (BOOTROM_INIT),
+      .N_WORDS   (64)
+    ) u_bootrom (
+      .clk  (clk),
+      .addr (imem_addr),
+      .data (boot_data)
+    );
+
+    // ── Fetch response mux (boot ROM / I-Cache) ──────────────────────────────
+    assign imem_data  = boot_selQQ ?  boot_data : icache_data;
+    assign imem_ready = boot_selQQ || icache_ready;
+  // ===========================================================================
+  // BOOT ROM
+  // ===========================================================================
+
+
+  // ===========================================================================
   // I-CACHE  ──  instructions served from SDRAM behind a 4-way BRAM cache
   // ===========================================================================
     icache #(
@@ -129,8 +178,9 @@ module cpu (
       .clk         (clk),
       .resetn      (resetn),
       .addr        (imem_addr),
-      .data        (imem_data),
-      .ready       (imem_ready),
+      .sel         (!boot_sel),
+      .data        (icache_data),
+      .ready       (icache_ready),
       .fill_addr   (icache_fillAddr),
       .fill_req    (icache_fillReq),
       .fill_rdata  (icache_fillRData),

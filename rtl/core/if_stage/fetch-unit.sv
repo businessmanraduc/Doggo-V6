@@ -10,7 +10,8 @@
 // Credit-based Fetch Issue: a new word is requested only when a FIFO slot is
 // reserved for its result (count + in-flight < DEPTH)
 module fetch_unit #(
-  parameter int DEPTH = 4
+  parameter int          DEPTH    = 4,
+  parameter logic [31:0] RESET_PC = `RESET_VECTOR
 ) (
   input  logic        clk,
   input  logic        resetn,
@@ -99,9 +100,9 @@ module fetch_unit #(
   // ===========================================================================
   always_ff @(posedge clk) begin
     if (!resetn) begin
-      fetch_pc <= `RESET_VECTOR; flight0_pc <= 32'd0; flight1_pc <= 32'd0;
+      fetch_pc <= RESET_PC; flight0_pc <= 32'd0; flight1_pc <= 32'd0;
       pending0 <= 1'b0; pending1 <= 1'b0;
-      head <= '0; tail <= '0; count <= '0; align_pc <= `RESET_VECTOR;
+      head <= '0; tail <= '0; count <= '0; align_pc <= RESET_PC;
       stalling <= 1'b0;
     end else if (redirect_en) begin
       fetch_pc <= {redirect_pc[31:2], 2'b00};

@@ -24,6 +24,7 @@ module icache #(
   /* verilator lint_off UNUSEDSIGNAL */
   input  logic [31:0] addr,         // word-aligned fetch address
   /* verilator lint_on  UNUSEDSIGNAL */
+  input logic         sel,          // 1 = addr is cacheable
   output logic [31:0] data,         // instruction word @ addr
   output logic        ready,        // 1 = data valid (hit)
 
@@ -79,11 +80,11 @@ module icache #(
   logic [WAYS-1:0]      tagWriteEnable;   // per-way tag/valid strobe
   logic [WAYS-1:0]      tagWriteQ;        // registered copy -> write decode
   always_comb begin
-    integer way;
+    integer w;
     dataWriteAddress = {fill_set, fill_wcnt};
-    for (way = 0; way < WAYS; way = way + 1) begin
-      dataWriteEnable[way] = (state == S_FILL) && fill_rvalid && (victim_way == WAY_W'(way));
-      tagWriteEnable[way]  = (state == S_FILL) && fill_rvalid && (victim_way == WAY_W'(way)) &&
+    for (w = 0; w < WAYS; w = w + 1) begin
+      dataWriteEnable[w] = (state == S_FILL) && fill_rvalid && (victim_way == WAY_W'(w));
+      tagWriteEnable[w]  = (state == S_FILL) && fill_rvalid && (victim_way == WAY_W'(w)) &&
         (fill_wcnt == WIL_W'(LINE_WORDS-1));
     end
   end
@@ -122,9 +123,11 @@ module icache #(
     end
   endgenerate
 
+  logic selQ;
   always_ff @(posedge clk) begin
     compTag <= tag;
     set     <= set_idx;
+    selQ    <= sel;
   end
 
   // ── Hit detection + way select (stage A compare; at most one way hits) ──────
@@ -132,12 +135,12 @@ module icache #(
   logic             hit;
   logic [WAY_W-1:0] hit_way;
   always_comb begin
-    integer way;
+    integer w;
     hit_vec = '0;
     hit_way = '0;
-    for (way = 0; way < WAYS; way = way + 1) begin
-      hit_vec[way] = icacheValid[way] && (icacheTags[way] == compTag);
-      if (hit_vec[way]) hit_way = WAY_W'(way);
+    for (w = 0; w < WAYS; w = w + 1) begin
+      hit_vec[w] = icacheValid[w] && (icacheTags[w] == compTag);
+      if (hit_vec[w]) hit_way = WAY_W'(w);
     end
   end
   assign hit = |hit_vec;
@@ -154,10 +157,10 @@ module icache #(
   end
 
   always_comb begin
-    integer way;
+    integer w;
     data = '0;
-    for (way = 0; way < WAYS; way = way + 1) begin
-      if (hitVecQ[way]) data = icacheWordQ[way];
+    for (w = 0; w < WAYS; w = w + 1) begin
+      if (hitVecQ[w]) data = icacheWordQ[w];
     end
   end
 
@@ -200,13 +203,13 @@ module icache #(
       touch_en  <= 1'b0;
       case (state)
         S_CHECK: begin
-          if (!hit) begin
+          if (!hit && selQ) begin
             fill_set   <= set;
             fill_tag   <= compTag;
             fill_wcnt  <= '0;
             victim_way <= plru_victim(plru[set]);
             state      <= S_FILL;
-          end else begin
+          end else if (hit && selQ) begin
             touch_en   <= 1'b1;
             touch_set  <= set;
             touch_way  <= hit_way;

@@ -9,7 +9,9 @@
 //   [ decoupled fetch ] -> ID -> EX -> MA -> WB
 //
 // =============================================================================
-module phantom_core (
+module phantom_core #(
+  parameter logic [31:0] RESET_PC = `RESET_VECTOR
+) (
   input logic         clk,
   input logic         resetn,         // active-low synchronous reset
 
@@ -314,7 +316,8 @@ module phantom_core (
   // ===========================================================================
 
     fetch_unit #(
-      .DEPTH (FETCH_DEPTH)
+      .DEPTH       (FETCH_DEPTH),
+      .RESET_PC    (RESET_PC)
     ) u_fetch (
       .clk         (clk),
       .resetn      (resetn),

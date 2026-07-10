@@ -6,18 +6,20 @@
 # Top module   : soc  (rtl/soc/soc.sv)
 #
 # Usage:
-#   make                 - compile program, synthesise, place-and-route
+#   make                 - build bootrom, synthesise, place-and-route
 #   make diagnostic      - synthesize + place-and-route + Fmax & critpath
 #   make benchmark       - run SWEEP_SEEDS placements in parallel + report best seed
 #   make prog            - build + load to FPGA SRAM
 #   make flash           - build + write to SPI flash
-#   make imem            - compile program only → imem.hex  (no synth)
+#   make bin             - compile PROGRAM -> program.bin  (no synth)
+#   make send            - compile PROGRAM + send it over UART to the bootloader
 #   make clean           - remove all generated files
 #
-# PROGRAM: path to the .S source to load into IMEM.
+# PROGRAM: path to the .S source to send.  TTY: serial port for 'make send'.
 # =============================================================================
 
 PROGRAM ?= ../programs/sdramCounter.S
+TTY     ?= /dev/ttyUSB0
 
 # ── Toolchain ─────────────────────────────────────────────────────────────────
 GCC      = riscv32-none-elf-gcc
@@ -55,7 +57,7 @@ SV_SOURCES = \
   $(SOC)/periph/clint.sv              \
   $(SOC)/mem/sdram-ctrl.sv            \
 	$(SOC)/mem/sdram-adapter.sv         \
-	$(SOC)/mem/sdram-preloader.sv       \
+	$(SOC)/mem/bootrom.sv               \
 	$(SOC)/mem/icache.sv                \
 	$(SOC)/cpu.sv                       \
   $(SOC)/soc.sv
@@ -70,7 +72,10 @@ PLACER_OPTS = --placer-heap-timingweight 90
 
 # ── Output artefacts ──────────────────────────────────────────────────────────
 PROG_ELF    = program.elf
-PAYLOAD_HEX = payload.hex
+PROG_BIN    = program.bin
+BOOT_SRC    = ../programs/bootloader.S
+BOOT_ELF    = bootrom.elf
+BOOTROM_HEX = bootrom.hex
 SYNTH_JSON  = soc.json
 SYNTH_CFG   = soc.config
 BITSTREAM   = soc.bit
@@ -86,29 +91,39 @@ SEED        ?=
 # TARGETS
 # =============================================================================
 
-.PHONY: all payload synth pnr diagnostic benchmark prog flash clean
+.PHONY: all bootrom bin send synth pnr diagnostic benchmark prog flash clean
 
 all: $(BITSTREAM)
 
-# ── Step 1: Compile payload .S → imem.hex (32-bit Verilog hex) ───────────────
-payload: $(PAYLOAD_HEX)
+# ── Step 1: Assemble the bootloader → bootrom.hex (32-bit Verilog hex) ───────
+bootrom: $(BOOTROM_HEX)
 
-$(PAYLOAD_HEX): $(PROGRAM)
+$(BOOTROM_HEX): $(BOOT_SRC)
+	$(GCC) -march=rv32i -mabi=ilp32 -nostdlib -Ttext 0x20000000 -o $(BOOT_ELF) $<
+	$(OBJCOPY) -O verilog --verilog-data-width 4 --change-addresses -0x20000000 $(BOOT_ELF) $(BOOTROM_HEX)
+	@echo "Generated $(BOOTROM_HEX) from $<"
+
+bin: $(PROG_BIN)
+
+$(PROG_BIN): $(PROGRAM)
 	$(GCC) $(GCC_FLAGS) -o $(PROG_ELF) $<
-	$(OBJCOPY) -O verilog --verilog-data-width 4 $(PROG_ELF) $(PAYLOAD_HEX)
-	@echo "Generated $(PAYLOAD_HEX) from $<"
+	$(OBJCOPY) -O binary $(PROG_ELF) $(PROG_BIN)
+	@echo "Generated $(PROG_BIN) from $<"
 
-# ── Step 2: Yosys synthesis ───────────────────────────────────────────────────
+send: $(PROG_BIN)
+	python3 send.py $(PROG_BIN) $(TTY)
+
+# ── Step 2: Yosys synthesis ──────────────────────────────────────────────────
 synth: $(SYNTH_JSON)
 
-synth.ys: $(SV_SOURCES) $(PAYLOAD_HEX)
+synth.ys: $(SV_SOURCES) $(BOOTROM_HEX)
 	@echo "read_verilog -sv -I$(CORE) -I$(SOC) $(SV_SOURCES)" >  synth.ys
 	@echo "synth_ecp5 -top soc -json $(SYNTH_JSON)"           >> synth.ys
 
 $(SYNTH_JSON): synth.ys
 	$(YOSYS) synth.ys
 
-# ── Step 3: Place and route ───────────────────────────────────────────────────
+# ── Step 3: Place and route ──────────────────────────────────────────────────
 pnr: $(BITSTREAM)
 
 $(BITSTREAM): $(SYNTH_JSON) $(LPF)
@@ -157,7 +172,8 @@ flash: $(BITSTREAM)
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 clean:
-	rm -f $(PROG_ELF) $(PAYLOAD_HEX) $(SYNTH_JSON) $(SYNTH_CFG) $(BITSTREAM) \
+	rm -f $(PROG_ELF) $(PROG_BIN) $(BOOT_ELF) $(BOOTROM_HEX) \
+		    $(SYNTH_JSON) $(SYNTH_CFG) $(BITSTREAM) \
         $(DIAG_LOG) $(DIAG_CFG) synth.ys
 	rm -rf sweep_tmp
 

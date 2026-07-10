@@ -11,12 +11,17 @@
 // ── Address decode ───────────────────────────────────────────────────────────
 // A load/store with bit 31 set targets the peripheral bus instead of DMEM.
 // A load/store with bit 30 set (and bit 31 clear) targets external SDRAM.
-//   0x0000_0000 .. 0x0000_0FFF  BRAM DMEM scratchpad (4 KB, single-cycle)
+// An instruction FETCH with bit 29 set targets the boot ROM (fetch-side only:
+// data accesses ignore bit 29 and fall through to SDRAM).
+//   0x0000_0000 .. 0x01FF_FFFF  SDRAM (32 MB, program + data; phys = addr[24:0])
+//   0x2000_0000 .. 0x2000_00FF  boot ROM (64 words, UART bootloader, fetch-only)
 //   0x4000_0000 .. 0x41FF_FFFF  SDRAM (32 MB, multi-cycle via sdram_adapter)
 //   0x8000_0000 ..              peripheral bus (UART, CLINT, LEDs)
 `define SOC_PERIPH_SEL_BIT      31
 `define SOC_SDRAM_SEL_BIT       30
 `define SOC_SDRAM_BASE          32'h4000_0000   // 32 MB external SDRAM window
+`define SOC_BOOTROM_SEL_BIT     29
+`define SOC_BOOTROM_BASE        32'h2000_0000   // UART bootloader ROM (fetch-side)
 
 // ── Peripheral base addresses ─────────────────────────────────────────────────
 `define SOC_UART_DATA_ADDR      32'h8000_2000   // UART data: write = TX byte, read = RX byte
