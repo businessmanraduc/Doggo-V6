@@ -151,7 +151,7 @@ module icache #(
       readyQ  <= 1'b0;
       hitVecQ <= '0;
     end else begin
-      readyQ  <= (state == S_CHECK) && hit;
+      readyQ  <= (state == S_CHECK) && (hit || !selQ);
       hitVecQ <= hit_vec;
     end
   end

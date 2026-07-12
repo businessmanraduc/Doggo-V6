@@ -160,8 +160,8 @@ module cpu #(
     );
 
     // ── Fetch response mux (boot ROM / I-Cache) ──────────────────────────────
-    assign imem_data  = boot_selQQ ?  boot_data : icache_data;
-    assign imem_ready = boot_selQQ || icache_ready;
+    assign imem_data  = boot_selQQ ? boot_data : icache_data;
+    assign imem_ready = icache_ready;
   // ===========================================================================
   // BOOT ROM
   // ===========================================================================

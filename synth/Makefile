@@ -105,10 +105,13 @@ $(BOOTROM_HEX): $(BOOT_SRC)
 
 bin: $(PROG_BIN)
 
-$(PROG_BIN): $(PROGRAM)
+$(PROG_BIN): $(PROGRAM) FORCE
 	$(GCC) $(GCC_FLAGS) -o $(PROG_ELF) $<
 	$(OBJCOPY) -O binary $(PROG_ELF) $(PROG_BIN)
 	@echo "Generated $(PROG_BIN) from $<"
+
+FORCE:
+.PHONY: FORCE
 
 send: $(PROG_BIN)
 	python3 send.py $(PROG_BIN) $(TTY)

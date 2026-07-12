@@ -14,3 +14,4 @@ synth/synth.ys
 synth/*.config
 synth/*.log
 synth/*.bit
+synth/*.bin
